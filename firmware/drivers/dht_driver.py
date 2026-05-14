@@ -1,15 +1,5 @@
 """
-drivers/dht_driver.py — DHT22 Sıcaklık & Nem Sürücüsü
-=======================================================
-adafruit-circuitpython-dht kütüphanesi ile DHT22'den
-sıcaklık (°C) ve nem (%RH) okur.
-DS18B20'den farklı olarak 1-Wire protokolü KULLANMAZ;
-standart GPIO pininden tek-telli protokol ile haberleşir.
-
-Bağlantı:
-  VCC → 3.3V | GND → GND | DATA → GPIO4 (pin 7)
-  /boot/config.txt'e overlay EKLEMEYİN (1-Wire değil)
-
+firmware/drivers/dht_driver.py — DHT22 Sıcaklık & Nem Sürücüsü
 ÇALIŞTIĞI YER: Raspberry Pi 3B
 """
 
@@ -21,98 +11,91 @@ from firmware.config import ThermalConfig
 
 logger = logging.getLogger(__name__)
 
-_MAX_RETRY = 3        # Okuma hatası olursa kaç kez tekrar dene
-_RETRY_DELAY_S = 0.5  # Denemeler arası bekleme
+_MAX_RETRY    = 3
+_RETRY_DELAY  = 0.5
 
 
 class DHTDriver(BaseSensor):
-    """
-    DHT22 sıcaklık ve nem sensörü sürücüsü.
-    DHT22 bazen okuma hatası verir; retry mekanizması bunu ele alır.
-    """
-
     def __init__(self):
-        """
-        Yapması gerekenler:
-        - BaseSensor.__init__("DHT22") çağır
-        - self._dht = None  (adafruit_dht.DHT22 örneği)
-        - self._pin_number = 4  (GPIO4 → board.D4)
-        - self._last_temp: Optional[float] = None
-        - self._last_humidity: Optional[float] = None
-        """
-        pass
+        super().__init__("DHT22")
+        self._dht = None
+        self._pin_number = 4
+        self._last_temp:     Optional[float] = None
+        self._last_humidity: Optional[float] = None
 
     def initialize(self) -> bool:
-        """
-        DHT22 sensörünü başlatır.
-
-        Yapması gerekenler:
-        - import adafruit_dht, board
-        - self._dht = adafruit_dht.DHT22(board.D4, use_pulseio=False)
-          (use_pulseio=False Pi 3B'de daha kararlı çalışır)
-        - Bir test okuması yap; başarılıysa True döndür
-        - Başarısızsa loglayıp False döndür
-        - self._initialized = True
-        """
-        pass
+        try:
+            import adafruit_dht  # type: ignore
+            import board         # type: ignore
+            self._dht = adafruit_dht.DHT22(board.D4, use_pulseio=False)
+            # Test okuması
+            _ = self._dht.temperature
+            self._initialized = True
+            self._logger.info("DHT22 başlatıldı — GPIO4")
+            return True
+        except Exception as exc:
+            self._logger.error(f"DHT22 başlatılamadı: {exc}")
+            return False
 
     def read(self) -> Optional[dict]:
-        """
-        Sıcaklık ve nem değerlerini okur, retry ile tekrar dener.
+        if not self._initialized or self._dht is None:
+            return None
 
-        Yapması gerekenler:
-        - _MAX_RETRY kez dene:
-          - self._dht.temperature ve self._dht.humidity oku
-          - None döndürmüyorsa:
-            self._last_temp ve self._last_humidity güncelle
-            Döndür: {
-              "timestamp": time.time(),
-              "temperature_c": float,
-              "humidity_pct": float
+        for attempt in range(_MAX_RETRY):
+            try:
+                temp = self._dht.temperature
+                hum  = self._dht.humidity
+                if temp is not None and hum is not None:
+                    self._last_temp     = temp
+                    self._last_humidity = hum
+                    return {
+                        "timestamp":       time.time(),
+                        "temp_c":          round(temp, 1),
+                        "humidity":        round(hum, 1),
+                        "cpu_temp_c":      self.get_cpu_temperature(),
+                    }
+            except RuntimeError as exc:
+                self._logger.debug(f"DHT22 okuma hatası (deneme {attempt+1}): {exc}")
+                time.sleep(_RETRY_DELAY)
+            except Exception as exc:
+                self._logger.warning(f"DHT22 beklenmeyen hata: {exc}")
+                time.sleep(_RETRY_DELAY)
+
+        # Tüm denemeler başarısız — stale veri
+        if self._last_temp is not None:
+            self._logger.warning("DHT22 stale veri döndürülüyor")
+            return {
+                "timestamp": time.time(),
+                "temp_c":    self._last_temp,
+                "humidity":  self._last_humidity,
+                "cpu_temp_c": self.get_cpu_temperature(),
+                "stale":     True,
             }
-          - RuntimeError veya Exception olursa loglayıp _RETRY_DELAY_S bekle
-        - Tüm denemeler başarısızsa:
-          Son geçerli değer varsa onu döndür (stale data flag ile)
-          Hiç değer yoksa None döndür
-        - Not: DHT22 minimum 0.5 saniye okuma aralığı gerektirir
-        """
-        pass
+        return None
 
     def get_cpu_temperature(self) -> Optional[float]:
-        """
-        Raspberry Pi CPU sıcaklığını okur (termal karşılaştırma için).
-
-        Yapması gerekenler:
-        - /sys/class/thermal/thermal_zone0/temp dosyasını oku
-        - Değeri 1000'e böl (milli°C → °C)
-        - float döndür
-        - Dosya bulunamazsa None döndür (Pi olmayan ortamda test için)
-        """
-        pass
+        try:
+            with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+                return round(int(f.read().strip()) / 1000.0, 1)
+        except Exception:
+            return None
 
     def get_combined_thermal_data(self) -> dict:
-        """
-        DHT22 ve CPU sıcaklıklarını tek seferde döndürür (termal model için).
-
-        Yapması gerekenler:
-        - read() ile DHT22 verisi al
-        - get_cpu_temperature() ile CPU verisi al
-        - Her ikisini birleştirip döndür:
-          {
-            "timestamp": float,
-            "ambient_temp_c": float veya None,
-            "ambient_humidity_pct": float veya None,
-            "cpu_temp_c": float veya None
-          }
-        """
-        pass
+        data = self.read() or {}
+        cpu  = self.get_cpu_temperature()
+        return {
+            "timestamp":           time.time(),
+            "ambient_temp_c":      data.get("temp_c"),
+            "ambient_humidity_pct": data.get("humidity"),
+            "cpu_temp_c":          cpu,
+        }
 
     def cleanup(self):
-        """
-        DHT22 kaynağını serbest bırakır.
-
-        Yapması gerekenler:
-        - self._dht.exit() çağır (None değilse)
-        - self._initialized = False
-        """
-        pass
+        if self._dht is not None:
+            try:
+                self._dht.exit()
+            except Exception:
+                pass
+            self._dht = None
+        self._initialized = False
+        self._logger.info("DHT22 kapatıldı.")
