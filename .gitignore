@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+env/
+.venv/
+
+# Gizli bilgiler
+.env
+*.env
+
+# Log dosyaları
+*.log
+/var/log/
+
+# Derleme çıktıları (C)
+*.o
+*.so
+*.a
+firmware/rtos/hello_rt
+firmware/rtos/prio_inh_demo
+firmware/rtos/imu_task
+firmware/rtos/fsm_task
+firmware/rtos/*.so
+
+# Kamera çıktıları
+/tmp/veloguard_photos/
+*.jpg
+*.mp4
+*.h264
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.cursor/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test çıktıları
+.pytest_cache/
+.coverage
+htmlcov/
+*.xml
+
+# Grafik çıktıları (üretilen, source değil)
+docs/figures/*.png
+docs/figures/*.pdf
+docs/figures/*.svg
+
+# Sunum ham materyaller
+presentation/raw/*.mp4
+presentation/raw/*.mov

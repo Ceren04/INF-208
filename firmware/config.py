@@ -1,0 +1,163 @@
+"""
+config.py — VeloGuard Merkezi Yapılandırma Dosyası
+===================================================
+Tüm sabit değerler, GPIO pin numaraları, eşikler ve sistem parametreleri
+bu dosyada tanımlanır. Başka hiçbir dosyada magic number kullanılmaz;
+her sabit buradan import edilir.
+
+ÇALIŞTIĞI YER: Raspberry Pi 3B
+"""
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()  # .env dosyasından TELEGRAM_TOKEN gibi gizli değerleri yükle
+
+# ─────────────────────────────────────────────
+# GPIO Pin Numaraları (BCM numaralandırma)
+# ─────────────────────────────────────────────
+class Pins:
+    # IMU (MPU-6050) — I2C bus, pin numarası sabit
+    IMU_I2C_ADDR        = 0x68
+
+    # INA219 — I2C bus
+    INA219_I2C_ADDR     = 0x40
+
+    # DHT22 — tek GPIO pin
+    DHT22_DATA          = 4      # GPIO4, fiziksel pin 7
+
+    # Reed switch (KY-021)
+    REED_SWITCH         = 27     # GPIO27
+
+    # PAM8403 hoparlör — donanımsal PWM
+    PAM8403_PWM         = 18     # GPIO18 (donanımsal PWM0)
+
+    # LED'ler
+    LED_RED             = 5      # GPIO5  — Alarm durumu
+    LED_YELLOW          = 6      # GPIO6  — Ön-alarm durumu
+    LED_GREEN           = 13     # GPIO13 — Armed / normal durum
+
+    # WCET ölçümü için debug pin (logic analyzer varsa)
+    WCET_DEBUG_IMU      = 19     # GPIO19 — IMU task ölçümü
+    WCET_DEBUG_FSM      = 26     # GPIO26 — FSM geçiş ölçümü
+
+
+# ─────────────────────────────────────────────
+# IMU / Hareket Algılama Parametreleri
+# ─────────────────────────────────────────────
+class IMUConfig:
+    SAMPLE_RATE_HZ      = 100    # IMU okuma frekansı (Hz)
+    SAMPLE_INTERVAL_S   = 1 / SAMPLE_RATE_HZ  # 10 ms
+
+    # Hareket büyüklüğü eşikleri (g cinsinden)
+    THRESHOLD_LOW_G     = 0.30   # PRE-ALARM tetikleyici (bu değerin üstü)
+    THRESHOLD_HIGH_G    = 0.80   # ALARM tetikleyici (bu değerin üstü)
+
+    # Adaptif öğrenme
+    BASELINE_WINDOW_S   = 30     # Başlangıç baseline öğrenme süresi (saniye)
+    ADAPTIVE_K          = 3.0    # Eşik = baseline_ortalama + K * standart_sapma
+
+    # Kalman filtresi
+    KALMAN_Q            = 0.01   # Süreç gürültüsü kovaryansı
+    KALMAN_R            = 0.1    # Ölçüm gürültüsü kovaryansı
+
+
+# ─────────────────────────────────────────────
+# FSM (Sonlu Durum Makinesi) Parametreleri
+# ─────────────────────────────────────────────
+class FSMConfig:
+    PRE_ALARM_TIMEOUT_S = 5.0    # Pre-Alarm → Armed geri dönüş süresi
+    ARM_DELAY_S         = 1.5    # ARM komutu sonrası geçerlilik gecikmesi
+    CALIBRATION_S       = 30.0   # Armed'a geçince baseline öğrenme süresi
+
+
+# ─────────────────────────────────────────────
+# Kamera Parametreleri
+# ─────────────────────────────────────────────
+class CameraConfig:
+    RESOLUTION          = (640, 480)   # Pi 3B RAM kısıtı nedeniyle düşük
+    JPEG_QUALITY        = 85
+    ALARM_PHOTO_COUNT   = 3            # Alarm anında kaç fotoğraf çekilir
+    ALARM_PHOTO_INTERVAL_S = 0.5       # Fotoğraflar arası süre
+    MOTION_MIN_AREA_PX  = 500          # OpenCV: minimum hareket alanı (piksel²)
+    PHOTO_SAVE_DIR      = "/tmp/veloguard_photos"
+
+
+# ─────────────────────────────────────────────
+# Ses (PAM8403) Parametreleri
+# ─────────────────────────────────────────────
+class SoundConfig:
+    PRE_ALARM_FREQ_HZ   = 1000   # Ön-alarm tonu frekansı
+    PRE_ALARM_BEEPS     = 1      # Ön-alarmda kaç kez bip
+    ALARM_FREQ_LOW_HZ   = 880    # Alarm sireni — düşük ton
+    ALARM_FREQ_HIGH_HZ  = 2200   # Alarm sireni — yüksek ton
+    ALARM_SWEEP_STEP_HZ = 50     # Frekans süpürme adımı
+    PWM_DUTY_CYCLE      = 50     # %50 duty cycle
+
+
+# ─────────────────────────────────────────────
+# Enerji / Güç Yönetimi
+# ─────────────────────────────────────────────
+class PowerConfig:
+    BATTERY_LOW_PCT     = 20     # Düşük pil uyarı eşiği (%)
+    BATTERY_CRITICAL_PCT= 5      # Kritik pil eşiği (%)
+    VBAT_FULL_V         = 4.2    # 18650 tam dolu voltajı
+    VBAT_EMPTY_V        = 3.0    # 18650 boş voltajı
+    INA219_SAMPLE_HZ    = 2      # INA219 okuma frekansı
+
+
+# ─────────────────────────────────────────────
+# Termal Yönetim
+# ─────────────────────────────────────────────
+class ThermalConfig:
+    DHT22_SAMPLE_HZ         = 0.5    # DHT22 okuma frekansı (30 saniyede bir)
+    CPU_TEMP_WARN_C         = 75     # Uyarı sıcaklığı
+    CPU_TEMP_CAMERA_OFF_C   = 80     # Bu sıcaklıkta kamerayı kapat
+    CPU_TEMP_THROTTLE_C     = 85     # Bu sıcaklıkta CPU'yu yavaşlat
+    CPU_TEMP_SHUTDOWN_C     = 90     # Bu sıcaklıkta güvenli kapan
+
+
+# ─────────────────────────────────────────────
+# Telegram Bot
+# ─────────────────────────────────────────────
+class TelegramConfig:
+    TOKEN               = os.getenv("TELEGRAM_TOKEN", "")
+    CHAT_ID             = os.getenv("TELEGRAM_CHAT_ID", "")
+    SEND_TIMEOUT_S      = 10     # Telegram gönderim zaman aşımı
+
+
+# ─────────────────────────────────────────────
+# Web Arayüzü (Flask)
+# ─────────────────────────────────────────────
+class WebConfig:
+    HOST                = "0.0.0.0"
+    PORT                = 5000
+    DEBUG               = False
+
+
+# ─────────────────────────────────────────────
+# RTOS / Thread Öncelikleri (SCHED_FIFO)
+# ─────────────────────────────────────────────
+class TaskPriority:
+    WATCHDOG            = 95
+    REED_ISR            = 90
+    IMU_SAMPLING        = 80
+    FSM_CORE            = 70
+    CAMERA_CAPTURE      = 60
+    ALERT_ACTUATOR      = 50
+    TEMP_MONITOR        = 30
+    COMM_TELEGRAM       = 25
+    POWER_MONITOR       = 20
+    OLED_UPDATE         = 15
+    LOGGER              = 10
+
+
+# ─────────────────────────────────────────────
+# Loglama
+# ─────────────────────────────────────────────
+class LogConfig:
+    LOG_DIR             = "/var/log/veloguard"
+    LOG_FILE            = "veloguard.log"
+    MAX_BYTES           = 5 * 1024 * 1024   # 5 MB
+    BACKUP_COUNT        = 3
+    CSV_LOG_FILE        = "/var/log/veloguard/sensor_data.csv"

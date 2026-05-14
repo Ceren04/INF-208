@@ -1,0 +1,18 @@
+# Tüm metin dosyaları LF kullanır (Linux/Pi uyumluluğu için)
+* text=auto eol=lf
+*.py text eol=lf
+*.c  text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.csv text eol=lf
+*.env.example text eol=lf
+*.gitignore text eol=lf
+
+# Binary dosyalar
+*.jpg binary
+*.png binary
+*.mp4 binary
+*.zip binary
+*.whl binary

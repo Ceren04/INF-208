@@ -1,0 +1,19 @@
+# ============================================================
+# VeloGuard — Geliştirme / PC Bağımlılıkları
+# Pi'ya KURULMAZ. Sadece geliştirici bilgisayarında.
+# Kurulum: pip install -r requirements_dev.txt
+# ============================================================
+
+# --- Analiz / Görselleştirme (PC'de çalışır) ---
+matplotlib>=3.8.0
+pandas>=2.1.0
+
+# --- OpenCV (laptop kamerası ile test için) ---
+opencv-python>=4.8.0            # PC'de headless değil, GUI lazım
+
+# --- Testler ---
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# --- Tip kontrolü ---
+mypy>=1.7.0

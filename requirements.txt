@@ -1,0 +1,36 @@
+# ============================================================
+# VeloGuard — Raspberry Pi 3B Bağımlılıkları
+# Kurulum: pip install -r requirements.txt --break-system-packages
+# ============================================================
+
+# --- Donanım / GPIO ---
+RPi.GPIO>=0.7.1
+gpiozero>=2.0
+
+# --- I2C ---
+smbus2>=0.4.2
+
+# --- IMU (MPU-6050) ---
+# smbus2 yeterli, ayrıca paket gerekmez
+
+# --- Kamera ---
+picamera2>=0.3.12
+opencv-python-headless>=4.8.0   # Pi 3B için headless zorunlu
+
+# --- DHT22 (sıcaklık/nem) ---
+adafruit-circuitpython-dht>=3.7.8
+adafruit-blinka>=8.20.0
+
+# --- INA219 (enerji ölçümü) ---
+adafruit-circuitpython-ina219>=3.4.19
+
+# --- İletişim ---
+python-telegram-bot>=20.7
+Flask>=3.0.0
+
+# --- Matematiksel işlemler ---
+numpy>=1.24.0
+scipy>=1.11.0
+
+# --- Yardımcı ---
+python-dotenv>=1.0.0            # .env dosyasından ortam değişkenleri
