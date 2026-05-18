@@ -90,6 +90,13 @@ static void burn_cpu(double seconds) {
 static long long g_t0;  /* Başlangıç zamanı */
 
 static void set_rt_prio(int prio) {
+    /* Tüm thread'leri CPU 0'a sabitle — Priority Inversion ancak
+     * tek çekirdekte görünür (çok çekirdekte threadler paralel koşar) */
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(0, &cpuset);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset);
+
     struct sched_param sp = { .sched_priority = prio };
     int ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
     if (ret != 0)
