@@ -55,10 +55,10 @@ desktop.ini
 htmlcov/
 *.xml
 
-# Grafik çıktıları (üretilen, source değil)
-docs/figures/*.png
-docs/figures/*.pdf
-docs/figures/*.svg
+# Grafik çıktıları — ÖNEMLİ ölçüm görselleri commit edilir
+# docs/figures/*.png   ← artık ignore değil
+# docs/figures/*.pdf
+# docs/figures/*.svg
 
 # Sunum ham materyaller
 presentation/raw/*.mp4
