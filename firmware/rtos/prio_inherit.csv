@@ -1,0 +1,10 @@
+elapsed_ms,thread,event
+0.524,LOW,start
+0.640,LOW,mutex_acquired
+150.879,MID,start
+250.975,HIGH,mutex_request
+3000.751,LOW,mutex_released
+3000.917,HIGH,mutex_acquired
+3010.993,HIGH,done
+5151.123,MID,done
+5151.300,LOW,done
