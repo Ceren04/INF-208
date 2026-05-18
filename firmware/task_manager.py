@@ -40,12 +40,14 @@ class IMUTask:
 
     def _run(self):
         set_thread_realtime_priority(TaskPriority.IMU_SAMPLING)
-        if self._watchdog:
-            self._watchdog.register("IMUTask")
 
         if self._imu is None:
             logger.warning("IMUTask: IMU sürücüsü None — task sonlandırılıyor.")
             return
+
+        # Watchdog'u sadece task gerçekten çalışacaksa kaydet
+        if self._watchdog:
+            self._watchdog.register("IMUTask")
 
         while not self._stop_event.is_set():
             loop_start = time.monotonic()
