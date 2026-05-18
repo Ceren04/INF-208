@@ -1,129 +1,181 @@
 """
-tools/sensor_test_all.py — Tüm Sensör Entegrasyon Test Aracı
-=============================================================
-Her sensörü sırayla başlatır ve temel okuma testini yapar.
-PASS/FAIL çıktısı verir. Pi'da geliştirme sırasında kullanılır.
+tools/sensor_test_all.py — Tüm Sensör Entegrasyon Testi
+=========================================================
+Tüm sensörleri tek bir script'te test eder.
+30 saniye boyunca tüm sensörlerden veri okur, tablo halinde gösterir.
 
-Çalıştırma: sudo python3 tools/sensor_test_all.py
+Çalıştırma (Pi'da):
+  cd ~/veloguard && source venv/bin/activate
+  python3 tools/sensor_test_all.py
 
 ÇALIŞTIĞI YER: Raspberry Pi 3B
 """
 
 import sys
 import time
+import os
+from pathlib import Path
 
-def test_imu() -> bool:
-    """
-    MPU-6050 I2C bağlantısını ve temel okumayı test eder.
+BASE = Path(__file__).parent.parent
+sys.path.insert(0, str(BASE))
 
-    Yapması gerekenler:
-    - IMUDriver oluştur ve initialize() çağır
-    - 5 kez read() çağır
-    - Tüm okumalarda ax, ay, az değerleri 0'dan farklı mı? → PASS
-    - Herhangi biri hatalı → FAIL, hata mesajını yazdır
-    - cleanup() çağır
-    - bool döndür
-    """
-    pass
+from firmware.drivers.imu_driver import IMUDriver
+from firmware.algorithms.kalman import KalmanFilter1D
 
-
-def test_camera() -> bool:
-    """
-    Pi Camera v2 bağlantısını ve fotoğraf çekimini test eder.
-
-    Yapması gerekenler:
-    - CameraDriver oluştur ve initialize() çağır
-    - capture_photo("/tmp/veloguard_test.jpg") çağır
-    - Dosya var ve boyutu > 0 ise PASS
-    - cleanup() çağır
-    """
-    pass
+# ANSI renkleri
+RED    = "\033[91m"
+GREEN  = "\033[92m"
+YELLOW = "\033[93m"
+BLUE   = "\033[94m"
+RESET  = "\033[0m"
+BOLD   = "\033[1m"
 
 
-def test_reed() -> bool:
-    """
-    Reed switch GPIO interrupt kurulumunu test eder.
-
-    Yapması gerekenler:
-    - ReedDriver oluştur ve initialize() çağır
-    - read() çağır, dict içinde "is_open" anahtarı var mı?
-    - Callback kaydet, 3 sn bekle (test sırasında mıknatısı uzaklaştır)
-    - cleanup() çağır
-    """
-    pass
-
-
-def test_dht() -> bool:
-    """
-    DHT22 sıcaklık ve nem okumasını test eder.
-
-    Yapması gerekenler:
-    - DHTDriver oluştur ve initialize() çağır
-    - read() çağır (retry dahil)
-    - temperature_c: 0-60°C arası AND humidity_pct: 0-100 arası → PASS
-    - get_cpu_temperature() çağır, sonuç 0-90°C arası → PASS
-    - cleanup() çağır
-    """
-    pass
+def try_init(name: str, driver):
+    """Sürücüyü başlatmayı dener, sonucu raporlar."""
+    try:
+        ok = driver.initialize()
+        status = f"{GREEN}✓ HAZIR{RESET}" if ok else f"{RED}✗ BAŞARISIZ{RESET}"
+    except Exception as e:
+        ok = False
+        status = f"{RED}✗ HATA: {e}{RESET}"
+    print(f"  {name:<20} {status}")
+    return driver if ok else None
 
 
-def test_ina219() -> bool:
-    """
-    INA219 enerji ölçüm testini yapar.
-
-    Yapması gerekenler:
-    - INA219Driver oluştur ve initialize() çağır
-    - read() çağır
-    - bus_voltage_v: 4.0-5.5V arası ise PASS (Pi 5V hattı)
-    - current_ma: 50-2000mA arası ise PASS
-    - cleanup() çağır
-    """
-    pass
+def get_cpu_temp():
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            return int(f.read().strip()) / 1000.0
+    except Exception:
+        return None
 
 
-def test_pam8403() -> bool:
-    """
-    PAM8403 ses çıkışını test eder.
+def main():
+    print(f"\n{BOLD}=== VeloGuard Sensör Entegrasyon Testi ==={RESET}")
+    print(f"Kernel: {os.popen('uname -r').read().strip()}")
+    print(f"Python: {sys.version.split()[0]}\n")
 
-    Yapması gerekenler:
-    - PAM8403Driver oluştur ve initialize() çağır
-    - beep(1000, 500) çağır → 1kHz 500ms ton (kulak ile doğrula)
-    - beep(2000, 500) çağır → 2kHz farklı ton
-    - is_alarming() False ise PASS
-    - cleanup() çağır
-    - NOT: Bu test duysal (ses çıktısını insan doğrular)
-    """
-    pass
+    # ── Sürücüleri başlat ──────────────────────────────────────────────────
+    print(f"{BOLD}[1/3] Sürücü başlatma:{RESET}")
+    imu = try_init("IMU (MPU-6050)", IMUDriver())
 
+    try:
+        from firmware.drivers.led_driver import LEDDriver
+        led = try_init("LED (GPIO5/6/13)", LEDDriver())
+    except Exception as e:
+        led = None
+        print(f"  {'LED':<20} {RED}✗ {e}{RESET}")
 
-def test_leds() -> bool:
-    """
-    Üç LED'i sırayla yakar/söndürür.
+    try:
+        from firmware.drivers.reed_driver import ReedDriver
+        reed = try_init("Reed Switch (GPIO27)", ReedDriver())
+    except Exception as e:
+        reed = None
+        print(f"  {'Reed Switch':<20} {RED}✗ {e}{RESET}")
 
-    Yapması gerekenler:
-    - LEDDriver oluştur ve initialize() çağır
-    - RED → 1s açık → kapat
-    - YELLOW → 1s açık → kapat
-    - GREEN → 1s açık → kapat
-    - all_off() çağır
-    - cleanup() çağır
-    - NOT: Görsel doğrulama gerekir
-    """
-    pass
+    try:
+        from firmware.drivers.pam8403_driver import PAM8403Driver
+        pam = try_init("PAM8403 (GPIO18)", PAM8403Driver())
+    except Exception as e:
+        pam = None
+        print(f"  {'PAM8403':<20} {RED}✗ {e}{RESET}")
 
+    try:
+        from firmware.drivers.dht_driver import DHTDriver
+        dht = try_init("DHT22 (GPIO4)", DHTDriver())
+    except Exception as e:
+        dht = None
+        print(f"  {'DHT22':<20} {RED}✗ {e}{RESET}")
 
-def run_all_tests():
-    """
-    Tüm testleri çalıştırır ve özet tablosu yazdırır.
+    try:
+        from firmware.drivers.ina219_driver import INA219Driver
+        ina = try_init("INA219 (I2C 0x40)", INA219Driver())
+    except Exception as e:
+        ina = None
+        print(f"  {'INA219':<20} {RED}✗ {e}{RESET}")
 
-    Yapması gerekenler:
-    - Her test fonksiyonunu çağır, sonucu kaydet
-    - Tablo formatında yazdır:
-      "IMU      .... PASS / FAIL"
-    - Tüm testler geçtiyse sys.exit(0), herhangi biri başarısızsa sys.exit(1)
-    """
-    pass
+    # ── Veri okuma döngüsü ─────────────────────────────────────────────────
+    print(f"\n{BOLD}[2/3] 30 saniye veri akışı:{RESET}")
+    print(f"{'Zaman':>8} | {'ax':>7} {'ay':>7} {'az':>7} | "
+          f"{'mag':>7} {'flt':>7} | {'CPU°C':>7} | {'V':>6} {'I(mA)':>7} | "
+          f"{'Reed':>6}")
+    print("-" * 90)
+
+    kf = KalmanFilter1D()
+    start = time.time()
+
+    while time.time() - start < 30:
+        elapsed = time.time() - start
+        row = f"{elapsed:>8.1f}"
+
+        # IMU
+        if imu:
+            d = imu.read()
+            if d:
+                mag = imu.compute_magnitude(d["ax"], d["ay"], d["az"])
+                flt = kf.update(mag)
+                row += f" | {d['ax']:>+7.3f} {d['ay']:>+7.3f} {d['az']:>+7.3f}"
+                row += f" | {mag:>7.4f} {flt:>7.4f}"
+            else:
+                row += f" | {'---':>7} {'---':>7} {'---':>7} | {'---':>7} {'---':>7}"
+        else:
+            row += f" | {'N/A':>7} {'N/A':>7} {'N/A':>7} | {'N/A':>7} {'N/A':>7}"
+
+        # CPU sıcaklık
+        cpu_t = get_cpu_temp()
+        row += f" | {cpu_t:>7.1f}" if cpu_t else f" | {'---':>7}"
+
+        # INA219
+        if ina:
+            p = ina.read()
+            row += (f" | {p['bus_voltage_v']:>6.2f} {p['current_ma']:>7.0f}"
+                    if p else f" | {'---':>6} {'---':>7}")
+        else:
+            row += f" | {'---':>6} {'---':>7}"
+
+        # Reed switch
+        if reed:
+            rd = reed.read()
+            status = f"{RED}AÇIK{RESET}" if rd["is_open"] else f"{GREEN}kapalı{RESET}"
+            row += f" | {status:>6}"
+        else:
+            row += f" | {'---':>6}"
+
+        print(f"\r{row}", end="", flush=True)
+        time.sleep(0.1)
+
+    print()
+
+    # ── Aktüatör testi ─────────────────────────────────────────────────────
+    print(f"\n{BOLD}[3/3] Aktüatör testi:{RESET}")
+
+    if led:
+        print("  LED ARMED pattern (3sn)...")
+        led.set_fsm_pattern("ARMED")
+        time.sleep(1.5)
+        led.set_fsm_pattern("PRE_ALARM")
+        time.sleep(1.0)
+        led.set_fsm_pattern("ALARM")
+        time.sleep(0.5)
+        led.all_off()
+        print(f"  LED {GREEN}✓{RESET}")
+
+    if pam:
+        print("  PAM8403 bip testi...")
+        pam.beep_pattern(2, duration_ms=200)
+        print(f"  PAM8403 {GREEN}✓{RESET}")
+
+    # ── Temizlik ───────────────────────────────────────────────────────────
+    for drv in [imu, led, reed, pam, dht, ina]:
+        if drv:
+            try:
+                drv.cleanup()
+            except Exception:
+                pass
+
+    print(f"\n{BOLD}=== Test tamamlandı ==={RESET}")
 
 
 if __name__ == "__main__":
-    run_all_tests()
+    main()

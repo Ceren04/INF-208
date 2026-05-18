@@ -1,142 +1,272 @@
 """
 tests/test_fsm.py — FSM Birim Testleri
-=======================================
-Tüm FSM geçişlerini donanım olmadan test eder.
+========================================
+VeloGuard'ın 5-durumlu FSM'ini kapsamlı şekilde test eder.
+Tüm geçişler, timeout davranışları ve callback mekanizması test edilir.
 
-Çalıştırma: pytest tests/test_fsm.py -v
+Çalıştırma:
+  cd ~/veloguard
+  pytest tests/test_fsm.py -v
 
-ÇALIŞTIĞI YER: PC
+ÇALIŞTIĞI YER: PC ve Pi (donanım gerektirmez)
 """
 
+import time
+import threading
 import pytest
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from firmware.fsm import FSM, State, Event
 
 
-class TestFSMBasicTransitions:
-    """Temel durum geçiş testleri."""
+# ── Fixtures ──────────────────────────────────────────────────────────────────
 
-    def setup_method(self):
-        """Her test öncesi taze FSM oluştur."""
-        self.fsm = FSM()
-
-    def test_initial_state_is_disarmed(self):
-        """
-        Yapması gerekenler:
-        - FSM() oluşturulunca başlangıç durumu DISARMED olmalı
-        - assert fsm.get_state() == State.DISARMED
-        """
-        pass
-
-    def test_arm_transitions_to_armed(self):
-        """
-        Yapması gerekenler:
-        - ARM eventi gönder
-        - get_state() == State.ARMED olmalı
-        """
-        pass
-
-    def test_disarm_from_armed(self):
-        """
-        Yapması gerekenler:
-        - ARM → DISARM
-        - get_state() == State.DISARMED olmalı
-        """
-        pass
-
-    def test_motion_low_triggers_pre_alarm(self):
-        """
-        Yapması gerekenler:
-        - ARM → MOTION_LOW
-        - get_state() == State.PRE_ALARM olmalı
-        """
-        pass
-
-    def test_motion_high_from_armed_triggers_alarm(self):
-        """
-        Yapması gerekenler:
-        - ARM → MOTION_HIGH
-        - get_state() == State.ALARM olmalı
-        """
-        pass
-
-    def test_motion_high_from_pre_alarm_triggers_alarm(self):
-        """
-        Yapması gerekenler:
-        - ARM → MOTION_LOW → MOTION_HIGH
-        - get_state() == State.ALARM olmalı
-        """
-        pass
-
-    def test_pre_alarm_timeout_returns_to_armed(self):
-        """
-        Yapması gerekenler:
-        - ARM → MOTION_LOW → (bekle > PRE_ALARM_TIMEOUT_S) → otomatik ARMED
-        - NOT: Timer'ın dolmasını beklemek yerine TIMEOUT_PRE_ALARM eventini elle gönder
-        """
-        pass
-
-    def test_ride_mode(self):
-        """
-        Yapması gerekenler:
-        - ARM → RIDE_START → get_state() == State.RIDE
-        - RIDE'da MOTION_HIGH göndermek ALARM tetiklemez
-        - RIDE_END → get_state() == State.ARMED
-        """
-        pass
-
-    def test_tamper_from_any_state_triggers_alarm(self):
-        """
-        Yapması gerekenler:
-        - DISARMED'dan TAMPER_OPEN → ALARM ve is_tamper() True
-        - ARMED'dan TAMPER_OPEN → ALARM ve is_tamper() True
-        """
-        pass
-
-    def test_disarm_does_not_clear_tamper(self):
-        """
-        Yapması gerekenler:
-        - ARM → TAMPER_OPEN → DISARM gönder
-        - is_tamper() hâlâ True olmalı (tamper sadece clear_tamper() ile kapanır)
-        """
-        pass
-
-    def test_invalid_transition_returns_false(self):
-        """
-        Yapması gerekenler:
-        - DISARMED'da MOTION_HIGH gönder (geçersiz geçiş)
-        - handle_event() False döndürmeli
-        - Durum DISARMED kalmalı
-        """
-        pass
+@pytest.fixture
+def fsm():
+    """Her test için temiz bir FSM örneği."""
+    return FSM()
 
 
-class TestFSMCallbacks:
-    """Durum değişim callback testleri."""
+@pytest.fixture
+def armed_fsm(fsm):
+    """ARMED durumunda başlayan FSM."""
+    fsm.handle_event(Event.ARM)
+    time.sleep(0.05)  # ARM_DELAY'i atla
+    return fsm
 
-    def test_callback_called_on_state_change(self):
-        """
-        Yapması gerekenler:
-        - callback_results = [] listesi oluştur
-        - fsm.register_state_change_callback(lambda s, t: callback_results.append(s))
-        - ARM eventi gönder
-        - callback_results[0] == State.ARMED olmalı
-        """
-        pass
 
-    def test_multiple_callbacks_all_called(self):
-        """
-        Yapması gerekenler:
-        - 3 farklı callback kaydet
-        - ARM eventi gönder
-        - 3 callback da çağrılmış olmalı
-        """
-        pass
+# ── Başlangıç durumu ──────────────────────────────────────────────────────────
 
-    def test_callback_exception_does_not_crash_fsm(self):
-        """
-        Yapması gerekenler:
-        - Hata fırlatan bir callback kaydet
-        - ARM eventi gönder → FSM çökmemeli
-        - Durum yine de ARMED olmalı
-        """
-        pass
+class TestInitialState:
+    def test_starts_disarmed(self, fsm):
+        assert fsm.get_state() == State.DISARMED
+
+    def test_not_tamper_initially(self, fsm):
+        assert fsm.is_tamper() is False
+
+    def test_status_dict_has_required_keys(self, fsm):
+        d = fsm.get_status_dict()
+        assert "state" in d
+        assert "is_tamper" in d
+        assert "state_duration_s" in d
+        assert "timestamp" in d
+
+    def test_status_dict_state_is_string(self, fsm):
+        assert fsm.get_status_dict()["state"] == "DISARMED"
+
+
+# ── Temel geçişler ────────────────────────────────────────────────────────────
+
+class TestBasicTransitions:
+    def test_disarmed_to_armed(self, fsm):
+        result = fsm.handle_event(Event.ARM)
+        assert result is True
+        assert fsm.get_state() == State.ARMED
+
+    def test_armed_to_disarmed(self, fsm):
+        fsm.handle_event(Event.ARM)
+        fsm.handle_event(Event.DISARM)
+        assert fsm.get_state() == State.DISARMED
+
+    def test_armed_to_ride(self, fsm):
+        fsm.handle_event(Event.ARM)
+        fsm.handle_event(Event.RIDE_START)
+        assert fsm.get_state() == State.RIDE
+
+    def test_ride_to_armed(self, fsm):
+        fsm.handle_event(Event.ARM)
+        fsm.handle_event(Event.RIDE_START)
+        fsm.handle_event(Event.RIDE_END)
+        assert fsm.get_state() == State.ARMED
+
+    def test_ride_to_disarmed(self, fsm):
+        fsm.handle_event(Event.ARM)
+        fsm.handle_event(Event.RIDE_START)
+        fsm.handle_event(Event.DISARM)
+        assert fsm.get_state() == State.DISARMED
+
+    def test_alarm_to_disarmed(self, fsm):
+        fsm.handle_event(Event.ARM)
+        # ARM_DELAY geçmesini bekle
+        time.sleep(0.02)
+        fsm._arm_suppress_until = 0  # suppress'i bypass et
+        fsm.handle_event(Event.MOTION_HIGH)
+        assert fsm.get_state() == State.ALARM
+        fsm.handle_event(Event.DISARM)
+        assert fsm.get_state() == State.DISARMED
+
+
+# ── Motion event geçişleri ────────────────────────────────────────────────────
+
+class TestMotionTransitions:
+    def test_armed_motion_low_to_pre_alarm(self, fsm):
+        fsm.handle_event(Event.ARM)
+        fsm._arm_suppress_until = 0
+        result = fsm.handle_event(Event.MOTION_LOW)
+        assert result is True
+        assert fsm.get_state() == State.PRE_ALARM
+
+    def test_armed_motion_high_to_alarm(self, fsm):
+        fsm.handle_event(Event.ARM)
+        fsm._arm_suppress_until = 0
+        fsm.handle_event(Event.MOTION_HIGH)
+        assert fsm.get_state() == State.ALARM
+
+    def test_pre_alarm_motion_high_to_alarm(self, fsm):
+        fsm.handle_event(Event.ARM)
+        fsm._arm_suppress_until = 0
+        fsm.handle_event(Event.MOTION_LOW)
+        assert fsm.get_state() == State.PRE_ALARM
+        fsm.handle_event(Event.MOTION_HIGH)
+        assert fsm.get_state() == State.ALARM
+
+    def test_motion_ignored_when_disarmed(self, fsm):
+        result = fsm.handle_event(Event.MOTION_HIGH)
+        assert result is False
+        assert fsm.get_state() == State.DISARMED
+
+    def test_motion_ignored_during_arm_delay(self, fsm):
+        fsm.handle_event(Event.ARM)
+        # suppress süresi dolmadan
+        result = fsm.handle_event(Event.MOTION_HIGH)
+        assert result is False
+        assert fsm.get_state() == State.ARMED
+
+
+# ── TAMPER (orthogonal durum) ─────────────────────────────────────────────────
+
+class TestTamper:
+    def test_tamper_from_disarmed(self, fsm):
+        fsm.handle_event(Event.TAMPER_OPEN)
+        assert fsm.get_state() == State.ALARM
+        assert fsm.is_tamper() is True
+
+    def test_tamper_from_armed(self, fsm):
+        fsm.handle_event(Event.ARM)
+        fsm.handle_event(Event.TAMPER_OPEN)
+        assert fsm.is_tamper() is True
+        assert fsm.get_state() == State.ALARM
+
+    def test_tamper_from_ride(self, fsm):
+        fsm.handle_event(Event.ARM)
+        fsm.handle_event(Event.RIDE_START)
+        fsm.handle_event(Event.TAMPER_OPEN)
+        assert fsm.is_tamper() is True
+
+
+# ── PRE_ALARM timeout ─────────────────────────────────────────────────────────
+
+class TestPreAlarmTimeout:
+    def test_pre_alarm_returns_to_armed_after_timeout(self, fsm):
+        from firmware.config import FSMConfig
+        # Çok kısa timeout için config'i geçici değiştir
+        original = FSMConfig.PRE_ALARM_TIMEOUT_S
+        FSMConfig.PRE_ALARM_TIMEOUT_S = 0.1
+        try:
+            fsm2 = FSM()
+            fsm2.handle_event(Event.ARM)
+            fsm2._arm_suppress_until = 0
+            fsm2.handle_event(Event.MOTION_LOW)
+            assert fsm2.get_state() == State.PRE_ALARM
+            time.sleep(0.3)  # timeout'u bekle
+            assert fsm2.get_state() == State.ARMED
+        finally:
+            FSMConfig.PRE_ALARM_TIMEOUT_S = original
+
+
+# ── Callback mekanizması ──────────────────────────────────────────────────────
+
+class TestCallbacks:
+    def test_callback_called_on_state_change(self, fsm):
+        calls = []
+        fsm.register_state_change_callback(lambda s, t: calls.append(s))
+        fsm.handle_event(Event.ARM)
+        assert len(calls) == 1
+        assert calls[0] == State.ARMED
+
+    def test_multiple_callbacks(self, fsm):
+        a, b = [], []
+        fsm.register_state_change_callback(lambda s, t: a.append(s))
+        fsm.register_state_change_callback(lambda s, t: b.append(s))
+        fsm.handle_event(Event.ARM)
+        assert len(a) == 1
+        assert len(b) == 1
+
+    def test_callback_exception_doesnt_break_fsm(self, fsm):
+        def bad_cb(s, t):
+            raise RuntimeError("callback hatası")
+        fsm.register_state_change_callback(bad_cb)
+        # Hata olsa bile FSM çalışmaya devam etmeli
+        fsm.handle_event(Event.ARM)
+        assert fsm.get_state() == State.ARMED
+
+    def test_tamper_flag_passed_to_callback(self, fsm):
+        tampers = []
+        fsm.register_state_change_callback(lambda s, t: tampers.append(t))
+        fsm.handle_event(Event.TAMPER_OPEN)
+        assert tampers[-1] is True
+
+
+# ── Thread güvenliği ──────────────────────────────────────────────────────────
+
+class TestThreadSafety:
+    def test_concurrent_events(self, fsm):
+        """50 thread eşzamanlı event gönderir, crash olmamalı."""
+        errors = []
+
+        def worker():
+            try:
+                for _ in range(10):
+                    fsm.handle_event(Event.ARM)
+                    fsm.handle_event(Event.DISARM)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(50)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+
+        assert len(errors) == 0
+
+    def test_get_state_while_transitioning(self, fsm):
+        """get_state() geçiş sırasında güvenli çağrılabilmeli."""
+        results = []
+
+        def transitioner():
+            for _ in range(100):
+                fsm.handle_event(Event.ARM)
+                fsm.handle_event(Event.DISARM)
+
+        def reader():
+            for _ in range(100):
+                results.append(fsm.get_state())
+
+        t1 = threading.Thread(target=transitioner)
+        t2 = threading.Thread(target=reader)
+        t1.start(); t2.start()
+        t1.join(); t2.join()
+
+        # Sadece geçerli state değerleri olmalı
+        valid = set(State)
+        assert all(r in valid for r in results)
+
+
+# ── get_status_dict ───────────────────────────────────────────────────────────
+
+class TestStatusDict:
+    def test_duration_increases_over_time(self, fsm):
+        fsm.handle_event(Event.ARM)
+        d1 = fsm.get_status_dict()["state_duration_s"]
+        time.sleep(0.1)
+        d2 = fsm.get_status_dict()["state_duration_s"]
+        assert d2 > d1
+
+    def test_state_resets_on_transition(self, fsm):
+        fsm.handle_event(Event.ARM)
+        time.sleep(0.2)
+        fsm.handle_event(Event.DISARM)
+        d = fsm.get_status_dict()["state_duration_s"]
+        assert d < 0.1  # yeni durumda az süre geçti
