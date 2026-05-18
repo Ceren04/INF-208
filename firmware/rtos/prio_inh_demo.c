@@ -1,184 +1,264 @@
-/**
- * rtos/prio_inh_demo.c — Priority Inheritance Ölçüm Demosu
- * ==========================================================
- * PTHREAD_PRIO_INHERIT ile priority inversion'ın önlendiğini
- * kanıtlamak için kullanılır. Hem standalone çalışır hem
- * Python ctypes ile shared library olarak yüklenebilir.
+/*
+ * firmware/rtos/prio_inh_demo.c — Priority Inversion & Inheritance Demo
+ * =======================================================================
+ * Priority Inversion problemi ve PTHREAD_PRIO_INHERIT çözümünü ölçer.
  *
- * Derleme (standalone):
- *   gcc -O2 -o prio_inh_demo prio_inh_demo.c -lpthread -lrt
- *   sudo ./prio_inh_demo
+ * SENARYO:
+ *   Thread LOW  (prio 20): mutex alır, 3sn CPU işi yapar, mutex bırakır
+ *   Thread MID  (prio 50): CPU yakar (mutex almaz) → priority inversion nedeni
+ *   Thread HIGH (prio 80): mutex almak ister → bekler
  *
- * Derleme (Python ctypes için shared library):
- *   gcc -shared -fPIC -O2 -o prio_inh_mutex.so prio_inh_demo.c -lpthread -lrt
+ * BEKLENEN SONUÇLAR:
+ *   PRIO_NONE:    HIGH, LOW'un işi bitene kadar BEKLER (~3sn)
+ *                 Çünkü MID, LOW'u preempt eder ve LOW mutex'i bırakamaz
+ *   PRIO_INHERIT: LOW'un önceliği geçici olarak HIGH'a yükselir
+ *                 MID preempt edemez → HIGH ~3sn bekleme yerine ~0sn bekler
  *
- * ÇALIŞTIĞI YER: Raspberry Pi 3B (ve Linux PC)
+ * Derleme:
+ *   gcc -O2 -o prio_inh_demo prio_inh_demo.c -lpthread -lrt -lm
+ *
+ * Çalıştırma:
+ *   sudo ./prio_inh_demo          (PRIO_INHERIT aktif)
+ *   sudo ./prio_inh_demo none     (PRIO_NONE — inversion görmek için)
+ *
+ * CSV çıktısı:  prio_results.csv  (prio_inv_plot.py ile grafik çizilir)
+ *
+ * ÇALIŞTIĞI YER: Raspberry Pi 3B
  */
 
-#include <pthread.h>
-#include <sched.h>
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <sched.h>
 #include <time.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
+#include <math.h>
 
-/* ─── Yapılandırma ─────────────────────────────────────── */
-#define PRIO_LOW    20   /* Logger task — mutex'i tutan    */
-#define PRIO_MED    50   /* Comm task  — CPU yükü oluştur  */
-#define PRIO_HIGH   80   /* IMU task   — mutex'i bekleyen  */
-#define MUTEX_HOLD_NS  50000000L   /* 50ms — mutex tutma süresi  */
-#define CPU_STRESS_NS  30000000L   /* 30ms — orta öncelik CPU yükü */
+/* ── Ayarlar ──────────────────────────────────────────────────────────────── */
+#define LOW_WORK_S      3       /* LOW thread'in mutex tutma süresi (sn) */
+#define MID_BURN_S      5       /* MID thread'in CPU yakma süresi (sn) */
+#define HIGH_WAIT_LIMIT 10      /* HIGH'ın maksimum bekleme süresi (sn) */
 
-/* ─── Veri yapıları ────────────────────────────────────── */
-typedef struct {
-    long   delay_ns;      /* Yüksek öncelikli thread'in bekleme süresi */
-    int    use_inherit;   /* 1: PRIO_INHERIT kullan, 0: kullanma         */
-} MeasurementResult;
+#define PRIO_LOW        20
+#define PRIO_MID        50
+#define PRIO_HIGH       80
 
-static pthread_mutex_t shared_mutex;
-static volatile int experiment_done = 0;
+/* ── Global değişkenler ───────────────────────────────────────────────────── */
+static pthread_mutex_t g_mutex;
+static int  g_use_inherit = 1;
+static FILE *g_csv = NULL;
 
-/* ─── Fonksiyon bildirimleri ───────────────────────────── */
+/* Zaman yardımcıları */
+static long long now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
 
-/**
- * init_mutex_with_inherit:
- *   PTHREAD_PRIO_INHERIT protokollü mutex oluşturur.
- *   Bu ayar olmadan priority inversion yaşanır;
- *   bu ayarla LOW prio thread geçici olarak HIGH prio alır.
- *
- * Yapması gerekenler:
- * - pthread_mutexattr_t başlat
- * - pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_INHERIT) ayarla
- * - pthread_mutex_init(&shared_mutex, &attr) çağır
- * - attr'ı temizle
- * - 0 döndür (başarı), negatif (hata)
- */
-int init_mutex_with_inherit(void);
+static double ns_to_ms(long long ns) { return (double)ns / 1e6; }
 
-/**
- * init_mutex_without_inherit:
- *   Standart (PTHREAD_PRIO_NONE) mutex oluşturur.
- *   Karşılaştırma için — priority inversion gözlemlemek için.
- *
- * Yapması gerekenler:
- * - pthread_mutexattr_t başlat (protocol ayarı YOK)
- * - pthread_mutex_init(&shared_mutex, &attr) çağır
- */
-int init_mutex_without_inherit(void);
+static void csv_log(const char *thread, const char *event, double elapsed_ms) {
+    if (g_csv)
+        fprintf(g_csv, "%.3f,%s,%s\n", elapsed_ms, thread, event);
+}
 
-/**
- * low_priority_thread:
- *   Düşük öncelikli thread (PRIO_LOW = 20).
- *   Mutex'i alır, MUTEX_HOLD_NS ns tutar, bırakır.
- *   Gerçek sistemde: Logger task
- *
- * Yapması gerekenler:
- * - SCHED_FIFO, PRIO_LOW önceliği ayarla
- * - pthread_mutex_lock(&shared_mutex)
- * - MUTEX_HOLD_NS nanosaniye meşgul döngü (busy-wait, sleep değil!)
- * - pthread_mutex_unlock(&shared_mutex)
- */
-void* low_priority_thread(void* arg);
+/* Yoğun CPU döngüsü (MID thread için priority inversion baskısı) */
+static void burn_cpu(double seconds) {
+    struct timespec end;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    end.tv_sec  += (time_t)seconds;
+    end.tv_nsec += (long)((seconds - (time_t)seconds) * 1e9);
+    if (end.tv_nsec >= 1000000000L) {
+        end.tv_sec++;
+        end.tv_nsec -= 1000000000L;
+    }
+    volatile double x = 1.0;
+    struct timespec now;
+    do {
+        for (int i = 0; i < 10000; i++) x = sqrt(x + 1.0);
+        clock_gettime(CLOCK_MONOTONIC, &now);
+    } while (now.tv_sec < end.tv_sec ||
+             (now.tv_sec == end.tv_sec && now.tv_nsec < end.tv_nsec));
+    (void)x;
+}
 
-/**
- * medium_priority_thread:
- *   Orta öncelikli thread (PRIO_MED = 50).
- *   Priority inversion'da LOW prio'yu preempt ederek HIGH'ı bloklar.
- *   Gerçek sistemde: Comm task
- *
- * Yapması gerekenler:
- * - SCHED_FIFO, PRIO_MED önceliği ayarla
- * - CPU_STRESS_NS nanosaniye meşgul döngü (preemption simülasyonu)
- */
-void* medium_priority_thread(void* arg);
+/* ── Thread'ler ───────────────────────────────────────────────────────────── */
 
-/**
- * high_priority_thread:
- *   Yüksek öncelikli thread (PRIO_HIGH = 80).
- *   Mutex almak için bekler — bekleme süresi ölçülür.
- *   Gerçek sistemde: IMU task
- *
- * Yapması gerekenler:
- * - SCHED_FIFO, PRIO_HIGH önceliği ayarla
- * - clock_gettime(CLOCK_MONOTONIC) ile bekleme başlangıcını kaydet
- * - pthread_mutex_lock(&shared_mutex)   ← bekleme burada olur
- * - clock_gettime ile bekleme bitişini kaydet
- * - Bekleme süresini hesapla, arg (MeasurementResult*)'a yaz
- * - pthread_mutex_unlock(&shared_mutex)
- */
-void* high_priority_thread(void* arg);
+static long long g_t0;  /* Başlangıç zamanı */
 
-/**
- * run_experiment:
- *   Tek bir deney koşusunu yürütür (with veya without inherit).
- *
- * Yapması gerekenler:
- * - use_inherit'e göre mutex başlat
- * - LOW, MED, HIGH thread'lerini belirli sırayla başlat:
- *   1. LOW thread başlar (mutex alır)
- *   2. Kısa bekle (LOW mutex'i tutarken)
- *   3. HIGH thread başlar (mutex için bekler)
- *   4. MED thread başlar (CPU yükü oluşturur)
- * - Tüm thread'lerin bitmesini bekle (pthread_join)
- * - HIGH thread'in bekleme süresini MeasurementResult'a kaydet
- * - Mutex temizle
- */
-MeasurementResult run_experiment(int use_inherit);
+static void set_rt_prio(int prio) {
+    struct sched_param sp = { .sched_priority = prio };
+    int ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
+    if (ret != 0)
+        fprintf(stderr, "UYARI: SCHED_FIFO ayarlanamadı (prio=%d): %s\n",
+                prio, strerror(ret));
+}
 
-/**
- * print_results:
- *   İki deneyin sonuçlarını karşılaştırmalı yazdırır.
- *
- * Yapması gerekenler:
- * - "Without PRIO_INHERIT: HIGH prio bekledi X ms" satırı
- * - "With    PRIO_INHERIT: HIGH prio bekledi Y ms" satırı
- * - İyileşme yüzdesini hesapla: (X - Y) / X * 100
- * - Rapora konacak tablo formatında çıktı ver
- */
-void print_results(MeasurementResult without_inherit, MeasurementResult with_inherit);
+/* LOW thread: mutex al → yavaş CPU işi → bırak */
+static void *thread_low(void *arg) {
+    (void)arg;
+    set_rt_prio(PRIO_LOW);
 
-/**
- * main:
- *   İki deneyi sırayla çalıştırır ve sonuçları karşılaştırır.
- *
- * Yapması gerekenler:
- * - Root kontrolü yap (SCHED_FIFO için gerekli)
- * - run_experiment(0) → without_inherit sonucu
- * - run_experiment(1) → with_inherit sonucu
- * - print_results() ile karşılaştır
- * - 0 döndür
- */
-int main(int argc, char* argv[]);
+    double t = ns_to_ms(now_ns() - g_t0);
+    printf("[%.1fms] LOW  başladı (prio=%d)\n", t, PRIO_LOW);
+    csv_log("LOW", "start", t);
 
-/* ─── Python ctypes arayüzü (shared library için) ─────── */
+    /* Mutex al */
+    pthread_mutex_lock(&g_mutex);
+    t = ns_to_ms(now_ns() - g_t0);
+    printf("[%.1fms] LOW  mutex ALDI — %dsn CPU işi yapıyor...\n", t, LOW_WORK_S);
+    csv_log("LOW", "mutex_acquired", t);
 
-/**
- * veloguard_mutex_init:
- *   Python ctypes'tan çağrılacak mutex başlatma fonksiyonu.
- *   ctypes.CDLL("prio_inh_mutex.so").veloguard_mutex_init(1) şeklinde çağrılır.
- *
- * Parametreler:
- *   use_inherit: 1 → PRIO_INHERIT, 0 → standart
- * Dönüş: 0 başarı, -1 hata
- */
-int veloguard_mutex_init(int use_inherit);
+    burn_cpu(LOW_WORK_S);
 
-/**
- * veloguard_mutex_lock:
- *   Python ctypes'tan mutex lock çağrısı.
- *   Dönüş: 0 başarı, pthread_mutex_lock hata kodu
- */
-int veloguard_mutex_lock(void);
+    /* Mutex bırak */
+    t = ns_to_ms(now_ns() - g_t0);
+    printf("[%.1fms] LOW  mutex BIRAKTI\n", t);
+    csv_log("LOW", "mutex_released", t);
+    pthread_mutex_unlock(&g_mutex);
 
-/**
- * veloguard_mutex_unlock:
- *   Python ctypes'tan mutex unlock çağrısı.
- */
-int veloguard_mutex_unlock(void);
+    t = ns_to_ms(now_ns() - g_t0);
+    printf("[%.1fms] LOW  tamamlandı\n", t);
+    csv_log("LOW", "done", t);
+    return NULL;
+}
 
-/**
- * veloguard_mutex_destroy:
- *   Mutex'i temizler.
- */
-void veloguard_mutex_destroy(void);
+/* MID thread: mutex almaz, sadece CPU yakar → priority inversion baskısı */
+static void *thread_mid(void *arg) {
+    (void)arg;
+    set_rt_prio(PRIO_MID);
+
+    /* LOW'un mutex almasını bekle */
+    struct timespec ts = { .tv_nsec = 100000000L }; /* 100ms */
+    nanosleep(&ts, NULL);
+
+    double t = ns_to_ms(now_ns() - g_t0);
+    printf("[%.1fms] MID  başladı (prio=%d) — CPU yakıyor...\n", t, PRIO_MID);
+    csv_log("MID", "start", t);
+
+    burn_cpu(MID_BURN_S);
+
+    t = ns_to_ms(now_ns() - g_t0);
+    printf("[%.1fms] MID  tamamlandı\n", t);
+    csv_log("MID", "done", t);
+    return NULL;
+}
+
+/* HIGH thread: mutex ister → bekler → alır */
+static void *thread_high(void *arg) {
+    (void)arg;
+    set_rt_prio(PRIO_HIGH);
+
+    /* LOW'un mutex almasını bekle */
+    struct timespec ts = { .tv_nsec = 200000000L }; /* 200ms */
+    nanosleep(&ts, NULL);
+
+    double t_request = ns_to_ms(now_ns() - g_t0);
+    printf("[%.1fms] HIGH mutex istiyor (prio=%d) ← BEKLEME BAŞLIYOR\n",
+           t_request, PRIO_HIGH);
+    csv_log("HIGH", "mutex_request", t_request);
+
+    /* KRİTİK ölçüm: mutex için ne kadar bekledi? */
+    pthread_mutex_lock(&g_mutex);
+    double t_acquired = ns_to_ms(now_ns() - g_t0);
+    double wait_ms = t_acquired - t_request;
+
+    printf("[%.1fms] HIGH mutex ALDI — bekleme süresi: %.1fms ← ÖLÇÜM\n",
+           t_acquired, wait_ms);
+    csv_log("HIGH", "mutex_acquired", t_acquired);
+
+    /* Kısa iş */
+    struct timespec ts2 = { .tv_nsec = 10000000L }; /* 10ms */
+    nanosleep(&ts2, NULL);
+
+    pthread_mutex_unlock(&g_mutex);
+    double t_done = ns_to_ms(now_ns() - g_t0);
+    printf("[%.1fms] HIGH tamamlandı\n", t_done);
+    csv_log("HIGH", "done", t_done);
+
+    /* Sonuç özeti */
+    printf("\n╔══════════════════════════════════════════════════╗\n");
+    printf("║  %-16s │ HIGH bekleme süresi: %8.1f ms  ║\n",
+           g_use_inherit ? "PRIO_INHERIT" : "PRIO_NONE   ", wait_ms);
+    printf("╚══════════════════════════════════════════════════╝\n\n");
+
+    return NULL;
+}
+
+/* ── Mutex başlatıcı ──────────────────────────────────────────────────────── */
+static void init_mutex(int use_inherit) {
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
+
+    if (use_inherit) {
+        pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_INHERIT);
+        printf("Mutex protokolü: PTHREAD_PRIO_INHERIT ← Priority Inversion önlendi\n");
+    } else {
+        pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_NONE);
+        printf("Mutex protokolü: PTHREAD_PRIO_NONE ← Priority Inversion görülecek\n");
+    }
+
+    pthread_mutex_init(&g_mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+}
+
+/* ── Thread oluşturucu ────────────────────────────────────────────────────── */
+static pthread_t create_rt_thread(void *(*fn)(void*), int prio) {
+    pthread_t tid;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+    pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
+    struct sched_param sp = { .sched_priority = prio };
+    pthread_attr_setschedparam(&attr, &sp);
+    pthread_create(&tid, &attr, fn, NULL);
+    pthread_attr_destroy(&attr);
+    return tid;
+}
+
+/* ── main ─────────────────────────────────────────────────────────────────── */
+int main(int argc, char *argv[]) {
+    g_use_inherit = 1;
+    if (argc > 1 && strcmp(argv[1], "none") == 0)
+        g_use_inherit = 0;
+
+    /* CSV dosyası */
+    const char *csv_name = g_use_inherit ? "prio_inherit.csv" : "prio_none.csv";
+    g_csv = fopen(csv_name, "w");
+    if (g_csv) {
+        fprintf(g_csv, "elapsed_ms,thread,event\n");
+        printf("CSV log: %s\n", csv_name);
+    }
+
+    printf("\n=== VeloGuard Priority Inversion Demo ===\n");
+    printf("Kernel: "); fflush(stdout); system("uname -r");
+    printf("Senaryo: LOW(prio=%d) mutex tutar, MID(prio=%d) CPU yakar, "
+           "HIGH(prio=%d) mutex ister\n\n", PRIO_LOW, PRIO_MID, PRIO_HIGH);
+
+    init_mutex(g_use_inherit);
+    g_t0 = now_ns();
+
+    /* LOW önce başlar (mutex alacak) */
+    pthread_t t_low  = create_rt_thread(thread_low,  PRIO_LOW);
+    struct timespec ts = { .tv_nsec = 50000000L }; /* 50ms */
+    nanosleep(&ts, NULL);
+
+    /* MID ve HIGH başlar */
+    pthread_t t_mid  = create_rt_thread(thread_mid,  PRIO_MID);
+    pthread_t t_high = create_rt_thread(thread_high, PRIO_HIGH);
+
+    pthread_join(t_low,  NULL);
+    pthread_join(t_mid,  NULL);
+    pthread_join(t_high, NULL);
+
+    pthread_mutex_destroy(&g_mutex);
+    if (g_csv) fclose(g_csv);
+
+    printf("CSV kaydedildi: %s\n", csv_name);
+    printf("Grafik için: python3 tools/prio_inv_plot.py\n");
+    return 0;
+}
