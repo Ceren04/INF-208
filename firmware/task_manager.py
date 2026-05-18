@@ -49,23 +49,41 @@ class IMUTask:
         if self._watchdog:
             self._watchdog.register("IMUTask")
 
+        from firmware.motion_detector import MotionLevel
+        from firmware.fsm import State
+        from firmware.config import FSMConfig
+
+        prev_state = None
+        arm_suppress_until = 0.0  # ARM sonrası motion eventlerini geçici sustur
+
         while not self._stop_event.is_set():
             loop_start = time.monotonic()
             try:
+                current_state = self._fsm.get_state()
+
+                # ARMED geçişi: detector sıfırla + kısa bekleme süresi
+                if current_state == State.ARMED and prev_state != State.ARMED:
+                    self._detector.reset()
+                    arm_suppress_until = time.time() + FSMConfig.ARM_DELAY_S
+                    logger.info("IMUTask: ARMED → detector sıfırlandı, "
+                                f"{FSMConfig.ARM_DELAY_S}s bekleme başladı")
+                prev_state = current_state
+
                 data = self._imu.read()
                 if data:
                     ax, ay, az = data["ax"], data["ay"], data["az"]
                     mag = self._imu.compute_magnitude(ax, ay, az)
                     filtered = self._detector.get_filtered_magnitude(mag)
                     level = self._detector.detect(mag)
-                    self._detector.update_baseline(mag, self._fsm.get_state().name)
+                    self._detector.update_baseline(mag, current_state.name)
                     self._state.update_imu(ax, ay, az, mag, filtered)
 
-                    from firmware.motion_detector import MotionLevel
-                    if level == MotionLevel.HIGH:
-                        self._state.push_event(Event.MOTION_HIGH)
-                    elif level == MotionLevel.LOW:
-                        self._state.push_event(Event.MOTION_LOW)
+                    # ARM suppress süresi geçtiyse event gönder
+                    if time.time() > arm_suppress_until:
+                        if level == MotionLevel.HIGH:
+                            self._state.push_event(Event.MOTION_HIGH)
+                        elif level == MotionLevel.LOW:
+                            self._state.push_event(Event.MOTION_LOW)
 
                 if self._watchdog:
                     self._watchdog.heartbeat("IMUTask")

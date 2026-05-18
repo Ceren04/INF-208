@@ -45,6 +45,10 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     <button class="btn btn-danger  btn-lg flex-fill" onclick="cmd('disarm')">🔓 DISARM</button>
     <button class="btn btn-primary btn-lg flex-fill" onclick="cmd('ride')">🚴 SÜRÜŞ</button>
   </div>
+  <div class="d-flex gap-2 flex-wrap mb-3">
+    <button class="btn btn-warning btn-lg flex-fill" onclick="cmd('ride_end')">🏁 SÜRÜŞ BİTİR</button>
+    <button class="btn btn-outline-danger btn-lg flex-fill" onclick="stopAlarm()">🔕 ALARM DURDUR</button>
+  </div>
 
   <div id="log" class="small text-secondary" style="max-height:200px;overflow-y:auto"></div>
 
@@ -54,8 +58,13 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       const r = await fetch('/api/command',{method:'POST',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({command:c})});
       const d = await r.json();
-      addLog('CMD: '+c+' → '+d.state);
+      addLog('CMD: '+c+' → '+(d.state||d.error));
       refresh();
+    }
+    async function stopAlarm() {
+      // Alarm durumundaysa DISARM yap, sonra bildirim ver
+      await cmd('disarm');
+      addLog('🔕 Alarm durduruldu');
     }
     async function refresh() {
       try {
