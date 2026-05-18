@@ -1,0 +1,154 @@
+<mxfile host="app.diagrams.net" modified="2026-05-18" version="21.0.0">
+  <diagram name="VeloGuard StateChart" id="statechart">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Başlangıç noktası -->
+        <mxCell id="start" value="" style="ellipse;aspect=fixed;fillColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="80" y="160" width="30" height="30" as="geometry"/>
+        </mxCell>
+
+        <!-- DISARMED -->
+        <mxCell id="disarmed" value="DISARMED&#xa;(Kapalı)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;fontStyle=1;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="160" y="145" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- ARMED -->
+        <mxCell id="armed" value="ARMED&#xa;(Aktif İzleme)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="420" y="145" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- PRE_ALARM -->
+        <mxCell id="pre_alarm" value="PRE_ALARM&#xa;(Şüpheli)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;fontStyle=1;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="420" y="310" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- ALARM -->
+        <mxCell id="alarm" value="ALARM&#xa;(Tam Alarm)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;fontStyle=1;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="680" y="220" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- RIDE -->
+        <mxCell id="ride" value="RIDE&#xa;(Sürüş Modu)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;fontStyle=1;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="160" y="310" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- TAMPER (orthogonal superstate) -->
+        <mxCell id="tamper_box" value="TAMPER (Orthogonal)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#FF0000;dashed=1;strokeWidth=2;fontSize=11;fontStyle=2;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="650" y="90" width="230" height="220" as="geometry"/>
+        </mxCell>
+        <mxCell id="tamper_note" value="Her durumda tetiklenebilir.&#xa;Sadece web+parola ile kapanır." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="655" y="270" width="220" height="40" as="geometry"/>
+        </mxCell>
+
+        <!-- Oklar -->
+        <!-- start → DISARMED -->
+        <mxCell id="e0" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="start" target="disarmed" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- DISARMED → ARMED -->
+        <mxCell id="e1" value="ARM" style="edgeStyle=orthogonalEdgeStyle;fontSize=11;fontStyle=1;" edge="1" source="disarmed" target="armed" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ARMED → DISARMED -->
+        <mxCell id="e2" value="DISARM" style="edgeStyle=orthogonalEdgeStyle;fontSize=11;exitX=0.5;exitY=1;entryX=0.5;entryY=1;curved=1;" edge="1" source="armed" target="disarmed" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="500" y="260"/>
+              <mxPoint x="240" y="260"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ARMED → PRE_ALARM -->
+        <mxCell id="e3" value="MOTION_LOW" style="edgeStyle=orthogonalEdgeStyle;fontSize=11;fontStyle=1;" edge="1" source="armed" target="pre_alarm" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- PRE_ALARM → ARMED (timeout) -->
+        <mxCell id="e4" value="TIMEOUT_PRE_ALARM&#xa;(5 sn)" style="edgeStyle=orthogonalEdgeStyle;fontSize=10;exitX=1;exitY=0.5;entryX=1;entryY=0.5;curved=1;" edge="1" source="pre_alarm" target="armed" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="640" y="340"/>
+              <mxPoint x="640" y="175"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- PRE_ALARM → ALARM -->
+        <mxCell id="e5" value="MOTION_HIGH" style="edgeStyle=orthogonalEdgeStyle;fontSize=11;fontStyle=1;strokeColor=#b85450;" edge="1" source="pre_alarm" target="alarm" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ARMED → ALARM (direct) -->
+        <mxCell id="e6" value="MOTION_HIGH" style="edgeStyle=orthogonalEdgeStyle;fontSize=11;fontStyle=1;strokeColor=#b85450;" edge="1" source="armed" target="alarm" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ALARM → DISARMED -->
+        <mxCell id="e7" value="DISARM" style="edgeStyle=orthogonalEdgeStyle;fontSize=11;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="alarm" target="disarmed" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="760" y="450"/>
+              <mxPoint x="240" y="450"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ARMED → RIDE -->
+        <mxCell id="e8" value="RIDE_START" style="edgeStyle=orthogonalEdgeStyle;fontSize=11;fontStyle=1;" edge="1" source="armed" target="ride" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="420" y="175"/>
+              <mxPoint x="240" y="175"/>
+              <mxPoint x="240" y="310"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- RIDE → ARMED -->
+        <mxCell id="e9" value="RIDE_END" style="edgeStyle=orthogonalEdgeStyle;fontSize=11;exitX=0.5;exitY=0;entryX=0.5;entryY=0;curved=1;" edge="1" source="ride" target="armed" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="240" y="240"/>
+              <mxPoint x="500" y="240"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- RIDE → DISARMED -->
+        <mxCell id="e10" value="DISARM" style="edgeStyle=orthogonalEdgeStyle;fontSize=11;exitX=0;exitY=0.5;entryX=0;entryY=0.5;curved=1;" edge="1" source="ride" target="disarmed" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="100" y="340"/>
+              <mxPoint x="100" y="175"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- TAMPER → ALARM (any state) -->
+        <mxCell id="e11" value="TAMPER_OPEN&#xa;(her durumda)" style="edgeStyle=orthogonalEdgeStyle;fontSize=10;strokeColor=#FF0000;fontStyle=1;" edge="1" source="tamper_box" target="alarm" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Notlar -->
+        <mxCell id="note1" value="Entry action:&#xa;- Kalman reset&#xa;- Baseline öğreniyor&#xa;- ARM_DELAY_S sonrası izleme" style="text;html=1;strokeColor=none;fillColor=#d5e8d4;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="420" y="60" width="160" height="75" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="note2" value="Entry action:&#xa;- 5sn timer başlar&#xa;- Sarı LED hızlı yanıp söner&#xa;- 1 bip sesi" style="text;html=1;strokeColor=none;fillColor=#fff2cc;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="420" y="390" width="160" height="75" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="note3" value="Entry action:&#xa;- PAM8403 alarm&#xa;- Kırmızı LED rapid flash&#xa;- Camera burst (3 foto)&#xa;- Telegram bildirim" style="text;html=1;strokeColor=none;fillColor=#f8cecc;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="680" y="300" width="160" height="90" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

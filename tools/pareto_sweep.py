@@ -181,7 +181,8 @@ def plot_pareto(points: List[dict], front: List[dict], out_path: str):
     ax.set_title("VeloGuard — Pareto Cephesi\nIMU Örnekleme Hızı Optimizasyonu",
                  fontsize=12, fontweight="bold")
 
-    from matplotlib.patches import Patch, Line2D
+    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
     legend_elements = [
         Line2D([0], [0], color=C_LINE, lw=2, label="Pareto Cephesi"),
         Patch(facecolor=C_FRONT, label="Pareto-optimal noktalar"),
@@ -230,7 +231,7 @@ def main():
     # CSV kaydet
     csv_path = BASE / "docs" / "figures" / "pareto_data.csv"
     with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["hz", "power_mw", "reaction_ms"])
+        writer = csv.DictWriter(f, fieldnames=["hz", "power_mw", "reaction_ms", "power_std"], extrasaction="ignore")
         writer.writeheader()
         writer.writerows(points)
     print(f"CSV: {csv_path}")

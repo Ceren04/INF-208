@@ -198,7 +198,7 @@ def main():
 
     # Markdown tablosu kaydet
     md_path = BASE / "docs" / "figures" / "wcet_table.md"
-    with open(md_path, "w") as f:
+    with open(md_path, "w", encoding="utf-8") as f:
         f.write("# WCET Analiz Tablosu — VeloGuard\n\n")
         f.write("| Task | Min(µs) | Avg(µs) | Max(µs) | Bütçe(µs) | Oran | Durum |\n")
         f.write("|------|---------|---------|---------|-----------|------|-------|\n")
