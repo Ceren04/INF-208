@@ -61,11 +61,12 @@ class IMUTask:
             try:
                 current_state = self._fsm.get_state()
 
-                # ARMED geçişi: detector sıfırla + kısa bekleme süresi
+                # ARMED geçişi: kuyruk + detector sıfırla + bekleme süresi
                 if current_state == State.ARMED and prev_state != State.ARMED:
+                    self._state.flush_events()   # eski MOTION eventlerini temizle
                     self._detector.reset()
                     arm_suppress_until = time.time() + FSMConfig.ARM_DELAY_S
-                    logger.info("IMUTask: ARMED → detector sıfırlandı, "
+                    logger.info("IMUTask: ARMED → kuyruk + detector sıfırlandı, "
                                 f"{FSMConfig.ARM_DELAY_S}s bekleme başladı")
                 prev_state = current_state
 

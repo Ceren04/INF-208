@@ -98,3 +98,15 @@ class SharedState:
             return self._event_queue.get(timeout=timeout)
         except queue.Empty:
             return None
+
+    def flush_events(self):
+        """Kuyruktaki tüm bekleyen eventleri temizler (ARM geçişinde çağrılır)."""
+        cleared = 0
+        while not self._event_queue.empty():
+            try:
+                self._event_queue.get_nowait()
+                cleared += 1
+            except queue.Empty:
+                break
+        if cleared:
+            logger.debug(f"Event kuyruğu temizlendi: {cleared} event atıldı")
