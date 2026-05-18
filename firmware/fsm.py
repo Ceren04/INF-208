@@ -62,6 +62,14 @@ class FSM:
                 self._notify_state_change()
                 return True
 
+            # ARM sonrası bekleme süresi: MOTION eventlerini yoksay
+            if event in (Event.MOTION_LOW, Event.MOTION_HIGH):
+                suppress_until = getattr(self, "_arm_suppress_until", 0.0)
+                if time.time() < suppress_until:
+                    remaining = round(suppress_until - time.time(), 2)
+                    logger.debug(f"ARM bekleme: {event.name} yoksayıldı ({remaining}s kaldı)")
+                    return False
+
             # Geçiş tablosu
             transition = {
                 (State.DISARMED,  Event.ARM):               self._on_enter_armed,
@@ -99,7 +107,8 @@ class FSM:
         self._cancel_timer()
         self._state = State.ARMED
         self._state_enter_time = time.time()
-        logger.info("→ ARMED")
+        self._arm_suppress_until = time.time() + FSMConfig.ARM_DELAY_S
+        logger.info(f"→ ARMED (motion {FSMConfig.ARM_DELAY_S}s susturuldu)")
 
     def _on_enter_pre_alarm(self):
         self._state = State.PRE_ALARM
