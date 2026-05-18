@@ -26,12 +26,17 @@ class ReedDriver(BaseSensor):
         try:
             if GPIO.getmode() is None:
                 GPIO.setmode(GPIO.BCM)
-            GPIO.setup(self._pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-            # Önceki oturumdan kalma event detection'ı temizle
+            # Önceki oturumdan kalma state'i temizle
             try:
                 GPIO.remove_event_detect(self._pin)
             except Exception:
                 pass
+            try:
+                GPIO.cleanup(self._pin)
+            except Exception:
+                pass
+            GPIO.setup(self._pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            import time as _t; _t.sleep(0.05)  # pin stabilizasyonu
             GPIO.add_event_detect(
                 self._pin,
                 GPIO.BOTH,

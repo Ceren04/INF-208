@@ -92,6 +92,7 @@ class IMUDriver(BaseSensor):
             gy = _to_signed((raw[10] << 8) | raw[11]) / _GYRO_SCALE
             gz = _to_signed((raw[12] << 8) | raw[13]) / _GYRO_SCALE
             temp_c = (tr / 340.0) + 36.53
+            self._error_count = 0  # başarılı okumada sayacı sıfırla
 
             return {
                 "timestamp": time.time(),
@@ -100,8 +101,31 @@ class IMUDriver(BaseSensor):
                 "temp_c": temp_c,
             }
         except (IOError, OSError) as exc:
-            self._logger.warning(f"IMU okuma hatası: {exc}")
+            self._error_count = getattr(self, "_error_count", 0) + 1
+            self._logger.warning(f"IMU okuma hatası: {exc} (art arda {self._error_count})")
+            # 5 art arda hata → I2C bus'ı yeniden başlat
+            if self._error_count >= 5:
+                self._logger.warning("IMU bus yeniden başlatılıyor...")
+                self._recover_bus()
             return None
+
+    def _recover_bus(self):
+        """I2C bus kapanıp yeniden açılarak bağlantı yenilenir."""
+        try:
+            if self._bus:
+                self._bus.close()
+        except Exception:
+            pass
+        try:
+            time.sleep(0.1)
+            self._bus = smbus2.SMBus(1)
+            self._bus.write_byte_data(self._addr, _REG_PWR_MGMT_1, 0x00)
+            time.sleep(0.05)
+            self._error_count = 0
+            self._logger.info("IMU bus yeniden başlatıldı.")
+        except Exception as exc:
+            self._logger.error(f"IMU bus kurtarma başarısız: {exc}")
+            self._initialized = False
 
     def compute_magnitude(self, ax: float, ay: float, az: float) -> float:
         """Hareketsiz durumda ~0'a yakın olan ivme büyüklüğü."""
