@@ -1,6 +1,7 @@
 """
-firmware/drivers/dht_driver.py — DHT22 Sıcaklık & Nem Sürücüsü
+firmware/drivers/dht_driver.py — DHT11/DHT22 Sıcaklık & Nem Sürücüsü
 ÇALIŞTIĞI YER: Raspberry Pi 3B
+DHT11: 0-50°C, ±2°C — DHT22: -40-80°C, ±0.5°C (aynı pin bağlantısı)
 """
 
 import time
@@ -27,11 +28,14 @@ class DHTDriver(BaseSensor):
         try:
             import adafruit_dht  # type: ignore
             import board         # type: ignore
-            self._dht = adafruit_dht.DHT22(board.D4, use_pulseio=False)
+            # DHT11 veya DHT22 — aynı pin, farklı sınıf
+            # Elinizde DHT11 varsa: adafruit_dht.DHT11
+            # Elinizde DHT22 varsa: adafruit_dht.DHT22
+            self._dht = adafruit_dht.DHT11(board.D4, use_pulseio=False)
             # Test okuması
             _ = self._dht.temperature
             self._initialized = True
-            self._logger.info("DHT22 başlatıldı — GPIO4")
+            self._logger.info("DHT11 başlatıldı — GPIO4")
             return True
         except Exception as exc:
             self._logger.error(f"DHT22 başlatılamadı: {exc}")
@@ -98,4 +102,4 @@ class DHTDriver(BaseSensor):
                 pass
             self._dht = None
         self._initialized = False
-        self._logger.info("DHT22 kapatıldı.")
+        self._logger.info("DHT11 kapatıldı.")
