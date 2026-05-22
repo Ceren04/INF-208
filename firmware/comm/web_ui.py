@@ -6,6 +6,7 @@ Erişim: http://<pi_ip>:5000
 
 import threading
 import logging
+import time
 from flask import Flask, jsonify, request, render_template_string
 from firmware.config import WebConfig
 
@@ -32,6 +33,12 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       Mod: <span id="state-badge" class="badge bg-secondary">—</span>
       <span id="tamper-badge"></span>
     </div>
+    <div id="tamper-clear" class="d-none mt-2">
+      <div class="input-group">
+        <input type="password" id="tamper-pwd" placeholder="Şifre" class="form-control">
+        <button class="btn btn-warning" onclick="clearTamper()">🔑 Tamper Temizle</button>
+      </div>
+    </div>
     <small>
       Pil: <span id="bat">?</span>% &nbsp;|&nbsp;
       CPU: <span id="cpu">?</span>°C &nbsp;|&nbsp;
@@ -41,11 +48,12 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <div class="d-flex gap-2 flex-wrap mb-3">
-    <button class="btn btn-success btn-lg flex-fill" onclick="cmd('arm')">🔒 ARM</button>
-    <button class="btn btn-danger  btn-lg flex-fill" onclick="cmd('disarm')">🔓 DISARM</button>
-    <button class="btn btn-primary btn-lg flex-fill" onclick="cmd('ride')">🚴 SÜRÜŞ</button>
+    <button class="btn btn-success btn-lg flex-fill" onclick="cmd('protect')">🛡️ KORU</button>
+    <button class="btn btn-primary btn-lg flex-fill" onclick="cmd('owner')">🏠 YANINDAYIM</button>
+    <button class="btn btn-danger  btn-lg flex-fill" onclick="cmd('off')">🔓 KAPAT</button>
   </div>
   <div class="d-flex gap-2 flex-wrap mb-3">
+    <button class="btn btn-info btn-lg flex-fill" onclick="cmd('ride')">🚴 SÜRÜŞ</button>
     <button class="btn btn-warning btn-lg flex-fill" onclick="cmd('ride_end')">🏁 SÜRÜŞ BİTİR</button>
     <button class="btn btn-outline-danger btn-lg flex-fill" onclick="stopAlarm()">🔕 ALARM DURDUR</button>
   </div>
@@ -62,9 +70,11 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       refresh();
     }
     async function stopAlarm() {
-      // Alarm durumundaysa DISARM yap, sonra bildirim ver
-      await cmd('disarm');
-      addLog('🔕 Alarm durduruldu');
+      const r = await fetch('/api/command',{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({command:'stop_alarm'})});
+      const d = await r.json();
+      addLog('🔕 Alarm durdur → '+(d.state||d.error));
+      refresh();
     }
     async function refresh() {
       try {
@@ -74,11 +84,29 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
         document.getElementById('state-badge').textContent = d.state;
         document.getElementById('tamper-badge').innerHTML =
           d.is_tamper ? '<span class="badge bg-danger ms-2">⚠ TAMPER</span>' : '';
-        document.getElementById('bat').textContent = d.battery_pct != null ? d.battery_pct.toFixed(0) : '?';
+        // Show tamper clear form when tamper is active
+        if (d.is_tamper) {
+          document.getElementById('tamper-clear').classList.remove('d-none');
+        } else {
+          document.getElementById('tamper-clear').classList.add('d-none');
+        }
+        document.getElementById('bat').textContent = d.battery_pct != null ? d.battery_pct.toFixed(0) : 'Adaptör';
         document.getElementById('cpu').textContent = d.cpu_temp_c != null ? d.cpu_temp_c.toFixed(1) : '?';
         document.getElementById('mag').textContent = d.imu_magnitude != null ? d.imu_magnitude.toFixed(4) : '?';
         document.getElementById('dur').textContent = d.state_duration_s ?? '?';
       } catch(e) { addLog('Bağlantı hatası'); }
+    }
+    async function clearTamper() {
+      const pwd = document.getElementById('tamper-pwd').value;
+      const r = await fetch('/api/clear_tamper', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({password: pwd})
+      });
+      const d = await r.json();
+      if (d.ok) addLog('✅ Tamper temizlendi');
+      else addLog('❌ Tamper temizleme başarısız');
+      refresh();
     }
     function addLog(msg) {
       const el = document.getElementById('log');
@@ -128,16 +156,28 @@ class WebUI:
             data = request.get_json(silent=True) or {}
             cmd  = data.get("command", "")
             mapping = {
-                "arm":    Event.ARM,
-                "disarm": Event.DISARM,
-                "ride":   Event.RIDE_START,
-                "ride_end": Event.RIDE_END,
+                "protect":    Event.ARM,         # Bisikleti koruma altına al
+                "owner":      Event.RIDE_START,  # Yanındayım — yeşil sabit, alarm yok
+                "off":        Event.DISARM,      # Tüm korumayı kapat
+                "ride":       Event.RIDE_START,  # Sürüş modu
+                "ride_end":   Event.RIDE_END,    # Sürüş bitti → KORU moduna dön
+                "stop_alarm": Event.STOP_ALARM,  # Siren sustur, KORU modunda kal
+                # Geriye dönük uyumluluk
+                "arm":        Event.ARM,
+                "disarm":     Event.DISARM,
             }
             event = mapping.get(cmd)
             if event is None:
                 return jsonify({"error": f"Bilinmeyen komut: {cmd}"}), 400
-            self._fsm.handle_event(event)
-            return jsonify({"ok": True, "state": self._fsm.get_state().name})
+            # FSMTask aktüatörleri tetiklesin diye kuyruğa gönder
+            old_state = self._fsm.get_state().name
+            self._shared_state.push_event(event)
+            for _ in range(20):
+              time.sleep(0.05)
+            new_state = self._fsm.get_state().name
+            changed = old_state != new_state
+            message = f"{old_state} → {new_state}" if changed else f"Geçiş yapılamadı: {old_state}"
+            return jsonify({"ok": True, "state": new_state, "changed": changed, "message": message})
 
         @app.route("/api/clear_tamper", methods=["POST"])
         def _clear_tamper():

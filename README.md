@@ -33,9 +33,9 @@ VeloGuard, park edilmiş araçları korumak için Raspberry Pi 3B üzerinde çal
 | Akım ölçer | INA219 | 1 | I2C (0x40) |
 | Reed switch | KY-021 | 1 | GPIO27 |
 | Ses amplifikatörü | PAM8403 | 1 | GPIO18 (PWM) |
-| LED Kırmızı | — | 1 | GPIO5 |
-| LED Sarı | — | 1 | GPIO6 |
-| LED Yeşil | — | 1 | GPIO13 |
+| LED Yeşil | — | 1 | GPIO23 |
+| LED Sarı | — | 1 | GPIO24 |
+| LED Kırmızı | — | 1 | GPIO25 |
 | Pil | 18650 Li-ion | 2 | MT3608 boost |
 
 ---

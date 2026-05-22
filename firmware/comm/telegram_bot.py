@@ -31,18 +31,14 @@ class TelegramNotifier:
         try:
             import telegram  # type: ignore
             self._bot = telegram.Bot(token=self._token)
-            # Bağlantı testi (sync)
-            import asyncio
-            loop = asyncio.new_event_loop()
-            me = loop.run_until_complete(self._bot.get_me())
-            loop.close()
-            logger.info(f"Telegram bağlandı: @{me.username}")
+            # Do not block on network call here; start sender thread and do lazy send/connect
             self._stop_event.clear()
             self._sender_thread = threading.Thread(
                 target=self._sender_loop, daemon=True, name="TelegramSender"
             )
             self._sender_thread.start()
             self._initialized = True
+            logger.info("Telegram sürücüsü başlatıldı (bağlantı arka planda doğrulanacak).")
             return True
         except ImportError:
             logger.warning("python-telegram-bot kurulu değil — bildirimler devre dışı.")
@@ -64,6 +60,8 @@ class TelegramNotifier:
 
     # Sync wrapper — TaskManager'dan çağrılır
     def send_alarm_message_sync(self, text: str):
+        if not self._initialized:
+            return
         self._enqueue({"type": "message", "text": text})
 
     def send_alarm_photo(self, photo_bytes: bytes, caption: str = ""):
@@ -72,6 +70,8 @@ class TelegramNotifier:
         self._enqueue({"type": "photo", "data": photo_bytes, "caption": caption})
 
     def send_alarm_photo_sync(self, photo_bytes: bytes, caption: str = ""):
+        if not self._initialized:
+            return
         self._enqueue({"type": "photo", "data": photo_bytes, "caption": caption})
 
     def send_status(self, status_dict: dict):
@@ -92,39 +92,38 @@ class TelegramNotifier:
         except queue.Full:
             logger.warning("Telegram kuyruğu dolu, mesaj atlandı.")
 
-    def _sender_loop(self):
+    def _send_item_sync(self, item: dict):
         import asyncio
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+
+        async def _send_item(item_):
+            if item_["type"] == "message":
+                await self._bot.send_message(chat_id=self._chat_id, text=item_["text"])
+            elif item_["type"] == "photo":
+                import io
+                await self._bot.send_photo(
+                    chat_id=self._chat_id,
+                    photo=io.BytesIO(item_["data"]),
+                    caption=item_.get("caption", ""),
+                )
+
+        for attempt in range(3):
+            try:
+                asyncio.run(_send_item(item))
+                return True
+            except Exception as exc:
+                logger.warning(f"Telegram gönderim hatası (deneme {attempt+1}): {exc}")
+                if attempt < 2:
+                    import time
+                    time.sleep(3)
+        return False
+
+    def _sender_loop(self):
         while not self._stop_event.is_set():
             try:
                 item = self._send_queue.get(timeout=1.0)
             except queue.Empty:
                 continue
-            for attempt in range(3):
-                try:
-                    if item["type"] == "message":
-                        loop.run_until_complete(
-                            self._bot.send_message(
-                                chat_id=self._chat_id,
-                                text=item["text"]
-                            )
-                        )
-                    elif item["type"] == "photo":
-                        import io
-                        loop.run_until_complete(
-                            self._bot.send_photo(
-                                chat_id=self._chat_id,
-                                photo=io.BytesIO(item["data"]),
-                                caption=item.get("caption", ""),
-                            )
-                        )
-                    break
-                except Exception as exc:
-                    logger.warning(f"Telegram gönderim hatası (deneme {attempt+1}): {exc}")
-                    if attempt < 2:
-                        import time; time.sleep(3)
-        loop.close()
+            self._send_item_sync(item)
 
     def stop(self):
         self._stop_event.set()

@@ -48,9 +48,9 @@
 - [x] Raspberry Pi 3B — SSH bağlantısı ✅
 - [x] **PREEMPT_RT kernel** `6.12.87+rpt-rpi-v8-rt` ✅ AKTİF
 - [x] MPU-6050 (GY-521) — I2C 0x68, WHO_AM_I 0x72 ✅
-- [x] LED Kırmızı (GPIO5) ✅
-- [x] LED Sarı (GPIO6) ✅
-- [x] LED Yeşil (GPIO13) ✅
+- [x] LED Yeşil (GPIO23) ✅
+- [x] LED Sarı (GPIO24) ✅
+- [x] LED Kırmızı (GPIO25) ✅
 - [x] Reed switch (GPIO27) ✅ gpiozero ile
 - [x] PAM8403 (GPIO18) ✅ başlatıldı
 - [ ] Pi Camera — bağlanacak

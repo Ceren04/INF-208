@@ -23,10 +23,8 @@ class Pins:
     # INA219 — I2C bus
     INA219_I2C_ADDR     = 0x40
 
-    # DHT sensor — tek GPIO pin (DHT11 veya DHT22 olabilir)
-    DHT_DATA            = 4      # GPIO4, fiziksel pin 7
-    # Backwards-compat alias
-    DHT22_DATA = DHT_DATA
+    # DHT22 — tek GPIO pin
+    DHT22_DATA          = 4      # GPIO4, fiziksel pin 7
 
     # Reed switch (KY-021)
     REED_SWITCH         = 27     # GPIO27

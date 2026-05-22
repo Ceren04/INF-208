@@ -130,14 +130,14 @@ Sensörler → [Sürücüler] → SharedState → [FSM + TaskManager] → Aktüa
 | Sıcaklık/Nem | DHT22 | 1 | GPIO4 | ~35 |
 | Akım ölçer | INA219 | 1 | I2C (0x40) | ~40 |
 | Reed switch | KY-021 | 1 | GPIO27 | ~15 |
-| Ses amplifikatörü | PAM8403 | 1 | GPIO18 (PWM) | ~30 |
-| LED Kırmızı | 5mm | 1 | GPIO5 | ~2 |
-| LED Sarı | 5mm | 1 | GPIO6 | ~2 |
-| LED Yeşil | 5mm | 1 | GPIO13 | ~2 |
-| Pil | 18650 Li-ion 3000mAh | 2 | BMS+MT3608 | ~80 |
-| Breadboard | 400 delik | 1 | — | ~20 |
+| Pasif buzzer | 2 pin | 1 | GPIO18 (PWM) | ~5 |
+| LED Yeşil | 5mm | 1 | GPIO23 | ~2 |
+| LED Sarı | 5mm | 1 | GPIO24 | ~2 |
+| LED Kırmızı | 5mm | 1 | GPIO25 | ~2 |
+| Pil | 18650 Li-ion 3000mAh | 2 | BMS 2S + MT3608 | ~80 |
+| Breadboard | 830 tie-point | 1 | BB+ / BB- güç rayları | ~25 |
 | Jumper kablo | M-F set | 1 | — | ~25 |
-| **TOPLAM** | | | | **~646 TL** |
+| **TOPLAM** | | | | **~621 TL** |
 
 ### 3.2 Pin Bağlantı Tablosu
 
@@ -147,17 +147,28 @@ Sensörler → [Sürücüler] → SharedState → [FSM + TaskManager] → Aktüa
 | MPU-6050 SCL | Pin 5 | GPIO3 | I2C |
 | MPU-6050 VCC | Pin 1 | 3.3V | — |
 | DHT22 DATA | Pin 7 | GPIO4 | 1-Wire |
-| Reed Switch | Pin 13 | GPIO27 | GPIO interrupt |
-| PAM8403 IN | Pin 12 | GPIO18 | Hardware PWM |
-| LED Kırmızı | Pin 29 | GPIO5 | GPIO |
-| LED Sarı | Pin 31 | GPIO6 | GPIO |
-| LED Yeşil | Pin 33 | GPIO13 | GPIO |
+| Reed Switch SIG | Pin 13 | GPIO27 | GPIO (gpiozero) |
+| Pasif Buzzer (+) | Pin 12 | GPIO18 | Hardware PWM |
+| LED Yeşil | Pin 16 | GPIO23 | GPIO |
+| LED Sarı | Pin 18 | GPIO24 | GPIO |
+| LED Kırmızı | Pin 22 | GPIO25 | GPIO |
 | INA219 SDA | Pin 3 | GPIO2 | I2C (0x40) |
 | INA219 SCL | Pin 5 | GPIO3 | I2C |
+| INA219 VCC/GND | BB+ / BB- | 3.3V / GND | Breadboard ray |
 
-### 3.3 Güç Sistemi
+### 3.3 Breadboard Güç Dağıtımı
 
-İki adet 18650 Li-ion hücre paralel bağlanarak 3.7V / 6000 mAh kapasiteli bir güç bankası oluşturulmuştur. MT3608 boost converter ile 5V'a yükseltilerek Pi'ya besleme yapılmaktadır. INA219, 5V hattına seri bağlanarak anlık akım ve güç tüketimini ölçmektedir.
+Tüm modüller breadboard güç rayları üzerinden beslenmektedir:
+
+- **BB+ (kırmızı ray):** Pi Pin 1 (3.3V) → MPU-6050, INA219, DHT, Reed VCC
+- **BB- (mavi ray):** Pi Pin 6 (GND) → tüm GND, LED katotları, buzzer (-), IMU AD0
+- **I2C ortak hat:** SDA (GPIO2) ve SCL (GPIO3) breadboard orta satırında paylaşılır
+
+> Ayrıntılı bağlantı şeması: `docs/VeloGuard_Fiziksel_Baglanti_Rehberi.md`
+
+### 3.4 Güç Sistemi
+
+İki adet 18650 Li-ion hücre **seri** bağlanarak (~7.4V) BMS 2S koruma devresi üzerinden MT3608 boost converter ile 5V'a yükseltilerek Pi'ya besleme yapılmaktadır. INA219, 5V hattına seri bağlanarak anlık akım ve güç tüketimini ölçmektedir.
 
 **Pil ömrü tahmini:**
 - ARMED modunda: ~1920 mW → 3.7V × 6Ah = 22.2 Wh → **~11.5 saat**
@@ -165,7 +176,7 @@ Sensörler → [Sürücüler] → SharedState → [FSM + TaskManager] → Aktüa
 
 > **Not:** Gerçek ölçümler için bkz. Bölüm 8.2.
 
-### 3.4 Mekanik Tasarım
+### 3.5 Mekanik Tasarım
 
 Sistem, bisikletin sele borusu altına montaj için IP65 sınıfı plastik muhafaza içine yerleştirilmiştir. Muhafaza boyutları 150×100×50 mm olup tüm bileşenleri barındırmaktadır. Pi Camera, muhafazanın ön yüzünde bisikletin arka tarafını izleyecek şekilde konumlandırılmıştır.
 
@@ -633,7 +644,7 @@ IMU örnekleme frekansı (Hz) arttıkça hem enerji tüketimi hem de alarm reaks
 **Senaryo 2 — Hırsızlık Tespiti:**
 1. Sistem ARMED, Pi bisiklete monte
 2. Bisiklet güçlü sallama (1.5g+) → PRE_ALARM → ALARM
-3. Sarı → Kırmızı LED, PAM8403 siren, Telegram bildirimi ✅
+3. Sarı → Kırmızı LED, pasif buzzer siren (GPIO18 PWM), Telegram bildirimi ✅
 
 **Senaryo 3 — Tamper Testi:**
 1. Sistem ARMED, reed switch mıknatıs ile kapalı
@@ -650,7 +661,25 @@ IMU örnekleme frekansı (Hz) arttıkça hem enerji tüketimi hem de alarm reaks
 - Crash yok, watchdog tetiklenmedi ✅
 - CPU: ortalama %45, RAM: 52 MB, CPU sıcaklık: max 62 °C ✅
 
-### 9.3 Sistem Performansı
+### 9.3 Fiziksel Entegrasyon Testi (`sensor_test_all.py`)
+
+21 Mayıs 2026 lab testi sonuçları:
+
+| Bileşen | Durum | Not |
+|---------|-------|-----|
+| MPU-6050 (0x68) | ✅ I2C görünür | Okuma döngüsünde sıfır değer — kablo stabilitesi kontrol edilecek |
+| INA219 (0x40) | ✅ I2C görünür | VIN hattı bağlı değil → ~1.04V okunuyor |
+| DHT11 (GPIO4) | ✅ / ⚠️ | Intermittent checksum; DHT11 sürücüsü kullanılıyor |
+| Reed Switch (GPIO27) | ✅ | gpiozero, tamper çalışıyor |
+| LED Yeşil/Sarı/Kırmızı | ✅ | GPIO23 / GPIO24 / GPIO25 (Pin 16/18/22) |
+| Pasif Buzzer (GPIO18) | ✅ | PAM8403 amplifikatör kullanılmıyor |
+| Pi Camera (IMX219) | ✅ | `rpicam-hello` 30 fps; `libcamera-still` yüklü değil |
+
+**I2C tarama (`i2cdetect -y 1`):** `0x40` (INA219) + `0x68` (MPU-6050) ✅
+
+**Birim testler:** `pytest tests/ -v` → 54/54 PASSED ✅
+
+### 9.4 Sistem Performansı
 
 | Metrik | Ölçülen | Hedef | Durum |
 |--------|---------|-------|-------|
@@ -667,16 +696,18 @@ IMU örnekleme frekansı (Hz) arttıkça hem enerji tüketimi hem de alarm reaks
 ### 10.1 Başarılar
 
 Bu çalışmada:
-1. Düşük maliyetli (~650 TL) donanımla endüstriyel düzeyde hırsızlık algılama gerçekleştirilmiştir.
+1. Düşük maliyetli (~621 TL) donanımla endüstriyel düzeyde hırsızlık algılama gerçekleştirilmiştir.
 2. PREEMPT-RT kernel ile 83 µs maksimum gecikme, belirleyici gerçek-zamanlı performans sağlanmıştır.
 3. PTHREAD_PRIO_INHERIT ile Priority Inversion problemi ölçülebilir biçimde çözülmüştür (4900 ms → 2750 ms, 1.8× iyileşme).
 4. Adaptif Kalman + eşik algoritması, statik eşikli sistemlere kıyasla yanlış alarm oranını %70 azaltmıştır.
 
 ### 10.2 Sınırlılıklar
 
-1. **IMU bağlantısı:** Breadboard bağlantısı zaman zaman I/O hatası üretmektedir. Lehimli bağlantı veya PCB gerektirmektedir.
-2. **PREEMPT_RT etkinliği:** Quad-core Pi'da tüm thread'ler farklı çekirdeklerde çalışabildiğinden tek çekirdekli sistemlere kıyasla Priority Inversion farkı daha az belirgindir. CPU affinity ile CPU 0'a sabitleme uygulanmıştır.
-3. **Pil ömrü:** ARMED modunda ~5.8 saat, hedeflenen 8 saatin altındadır. Kamera ve Telegram thread'lerinin ECO modunda daha agresif yönetimi ile iyileştirilebilir.
+1. **IMU bağlantısı:** Breadboard bağlantısı zaman zaman I/O hatası ve sıfır okuma üretmektedir. Lehimli bağlantı veya PCB gerektirmektedir.
+2. **INA219 güç hattı:** VIN+/VIN- pil/boost hattına henüz seri bağlanmadığından voltaj ölçümü anlamsız (~1V). Gerçek enerji metrikleri için güç hattı tamamlanacaktır.
+3. **Pasif buzzer:** PAM8403 amplifikatör yerine GPIO18 PWM ile doğrudan pasif buzzer kullanılmaktadır; ses seviyesi lab ortamı için yeterlidir.
+4. **PREEMPT_RT etkinliği:** Quad-core Pi'da Priority Inversion farkı tek çekirdekli sistemlere kıyasla daha az belirgindir.
+5. **Pil ömrü:** ARMED modunda ~5.8 saat, hedeflenen 8 saatin altındadır.
 
 ### 10.3 Gelecek Çalışmalar
 
@@ -715,7 +746,21 @@ Bu çalışmada:
 
 ## Ek A — Devre Şeması
 
-> *(Dosya: hardware/schematic_v2.png — laba döndüğünüzde Fritzing ile hazırlanacaktır)*
+Breadboard üzerinde güç rayı dağıtımı ve pin-pin bağlantılar:
+
+> **Belge:** `docs/VeloGuard_Fiziksel_Baglanti_Rehberi.md` (güncel, 21 Mayıs 2026)
+
+**Özet bağlantı:**
+```
+Pi Pin 1  (3.3V) → BB+ → Tüm modül VCC
+Pi Pin 6  (GND)  → BB- → Tüm GND + LED katot + Buzzer (-)
+Pi Pin 16 (GPIO23) → [220Ω] → LED Yeşil
+Pi Pin 18 (GPIO24) → [220Ω] → LED Sarı
+Pi Pin 22 (GPIO25) → [220Ω] → LED Kırmızı
+Pi Pin 12 (GPIO18) → [100Ω]  → Pasif Buzzer (+)
+```
+
+> *(Fritzing şeması: `hardware/schematic_v2.png` — opsiyonel)*
 
 ---
 
@@ -781,5 +826,5 @@ def _recover_bus(self):
 
 ---
 
-*Rapor taslağı — 18 Mayıs 2026*  
-*Gerçek ölçüm değerleri ve fotoğraflar laba döndükten sonra eklenecektir.*
+*Rapor taslağı — 21 Mayıs 2026*  
+*Fiziksel entegrasyon testi tamamlandı; IMU kablo stabilitesi ve INA219 güç hattı bekleniyor.*

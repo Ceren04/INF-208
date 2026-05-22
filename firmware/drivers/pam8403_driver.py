@@ -20,6 +20,8 @@ class PAM8403Driver:
         self._is_active = False
         self._alarm_thread: Optional[threading.Thread] = None
         self._stop_alarm_event = threading.Event()
+        self._beep_thread: Optional[threading.Thread] = None
+        self._stop_beep_event = threading.Event()
         self._initialized = False
 
     def initialize(self) -> bool:
@@ -52,8 +54,38 @@ class PAM8403Driver:
                      frequency_hz: int = SoundConfig.PRE_ALARM_FREQ_HZ,
                      on_ms: int = 200, off_ms: int = 150):
         for _ in range(count):
+            if self._stop_beep_event.is_set():
+                break
             self.beep(frequency_hz, on_ms)
+            if self._stop_beep_event.is_set():
+                break
             time.sleep(off_ms / 1000.0)
+
+    def start_beep_pattern_async(self, count: int, frequency_hz: int = SoundConfig.PRE_ALARM_FREQ_HZ,
+                                 on_ms: int = 200, off_ms: int = 150):
+        """Start a tracked beep pattern for PRE_ALARM. Can be stopped with stop_beep_pattern()."""
+        self._stop_beep_event.clear()
+        self._beep_thread = threading.Thread(
+            target=self.beep_pattern,
+            args=(count, frequency_hz, on_ms, off_ms),
+            daemon=True,
+            name="BeepPattern"
+        )
+        self._beep_thread.start()
+
+    def stop_beep_pattern(self):
+        self._stop_beep_event.set()
+        if self._beep_thread and self._beep_thread.is_alive():
+            try:
+                self._beep_thread.join(timeout=0.5)
+            except Exception:
+                pass
+        self._beep_thread = None
+        if self._pwm:
+            try:
+                self._pwm.ChangeDutyCycle(0)
+            except Exception:
+                pass
 
     def start_alarm(self):
         if self._is_active:
@@ -73,7 +105,10 @@ class PAM8403Driver:
             self.sweep_tone(SoundConfig.ALARM_FREQ_HIGH_HZ,
                             SoundConfig.ALARM_FREQ_LOW_HZ, 0.4)
         if self._pwm:
-            self._pwm.ChangeDutyCycle(0)
+            try:
+                self._pwm.ChangeDutyCycle(0)
+            except Exception:
+                pass
 
     def sweep_tone(self, freq_start: int = SoundConfig.ALARM_FREQ_LOW_HZ,
                    freq_end: int = SoundConfig.ALARM_FREQ_HIGH_HZ,
@@ -93,14 +128,24 @@ class PAM8403Driver:
                 self._pwm.ChangeDutyCycle(SoundConfig.PWM_DUTY_CYCLE)
                 time.sleep(delay)
                 freq += direction * step
-            self._pwm.ChangeDutyCycle(0)
         except Exception as exc:
             logger.warning(f"Sweep hatası: {exc}")
+        finally:
+            try:
+                if self._pwm:
+                    self._pwm.ChangeDutyCycle(0)
+            except Exception:
+                pass
 
     def stop_alarm(self):
+        # Signal stop for alarm loop and any beep pattern
         self._stop_alarm_event.set()
+        self.stop_beep_pattern()
         if self._alarm_thread and self._alarm_thread.is_alive():
-            self._alarm_thread.join(timeout=2.0)
+            try:
+                self._alarm_thread.join(timeout=0.5)
+            except Exception:
+                pass
         if self._pwm:
             try:
                 self._pwm.ChangeDutyCycle(0)

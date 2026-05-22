@@ -151,12 +151,8 @@ class VeloGuardApp:
         self._drivers["motion_detector"] = motion_detector
 
         # FSM → LED callback
-        if self._drivers.get("led"):
-            self._fsm.register_state_change_callback(
-                lambda state, tamper: self._drivers["led"].set_fsm_pattern(
-                    "TAMPER" if tamper else state.name
-                )
-            )
+        # NOTE: LED updates are handled centrally by TaskManager._trigger_actuators
+        # to avoid double-calls and race conditions. Do not register per-driver callbacks here.
 
         # Web UI
         try:

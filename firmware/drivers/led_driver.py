@@ -93,7 +93,8 @@ class LEDDriver:
     def set_fsm_pattern(self, fsm_state: str):
         self.all_off()
         if fsm_state == "DISARMED":
-            pass
+            # Heartbeat: very slow green blink so user knows system is powered
+            self.blink(LEDColor.GREEN, hz=0.2)
         elif fsm_state == "ARMED":
             self.blink(LEDColor.GREEN, hz=0.5)
         elif fsm_state == "PRE_ALARM":

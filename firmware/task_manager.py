@@ -54,37 +54,54 @@ class IMUTask:
         from firmware.config import FSMConfig
 
         prev_state = None
-        arm_suppress_until = 0.0  # ARM sonrası motion eventlerini geçici sustur
+        arm_suppress_until = 0.0
 
         while not self._stop_event.is_set():
             loop_start = time.monotonic()
             try:
                 current_state = self._fsm.get_state()
 
-                # ARMED geçişi: kuyruk + detector sıfırla + bekleme süresi
                 if current_state == State.ARMED and prev_state != State.ARMED:
-                    self._state.flush_events()   # eski MOTION eventlerini temizle
+                    self._state.flush_events()
                     self._detector.reset()
                     arm_suppress_until = time.time() + FSMConfig.ARM_DELAY_S
-                    logger.info("IMUTask: ARMED → kuyruk + detector sıfırlandı, "
-                                f"{FSMConfig.ARM_DELAY_S}s bekleme başladı")
+                    logger.info(
+                        f"IMUTask: KORU/ARMED → kuyruk sıfırlandı, "
+                        f"{FSMConfig.ARM_DELAY_S}s kalibrasyon"
+                    )
+                elif current_state == State.RIDE and prev_state != State.RIDE:
+                    self._state.flush_events()
+                    logger.info("IMUTask: YANINDAYIM/RIDE → hareket eventleri kapatıldı")
                 prev_state = current_state
+
+                # Hareket yalnızca koruma modunda izlenir
+                if current_state not in (State.ARMED, State.PRE_ALARM):
+                    if self._watchdog:
+                        self._watchdog.heartbeat("IMUTask")
+                    elapsed = time.monotonic() - loop_start
+                    sleep_time = self._interval - elapsed
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                    continue
 
                 data = self._imu.read()
                 if data:
                     ax, ay, az = data["ax"], data["ay"], data["az"]
-                    mag = self._imu.compute_magnitude(ax, ay, az)
-                    filtered = self._detector.get_filtered_magnitude(mag)
-                    level = self._detector.detect(mag)
-                    self._detector.update_baseline(mag, current_state.name)
-                    self._state.update_imu(ax, ay, az, mag, filtered)
+                    # Geçersiz sıfır okuma → sahte 1.0g alarmını önle
+                    if abs(ax) < 0.01 and abs(ay) < 0.01 and abs(az) < 0.01:
+                        logger.debug("IMUTask: geçersiz sıfır IMU okuması atlandı")
+                    else:
+                        mag = self._imu.compute_magnitude(ax, ay, az)
+                        filtered = self._detector.get_filtered_magnitude(mag)
+                        level = self._detector.detect(mag)
+                        self._detector.update_baseline(mag, current_state.name)
+                        self._state.update_imu(ax, ay, az, mag, filtered)
 
-                    # ARM suppress süresi geçtiyse event gönder
-                    if time.time() > arm_suppress_until:
-                        if level == MotionLevel.HIGH:
-                            self._state.push_event(Event.MOTION_HIGH)
-                        elif level == MotionLevel.LOW:
-                            self._state.push_event(Event.MOTION_LOW)
+                        if time.time() > arm_suppress_until:
+                            if level == MotionLevel.HIGH:
+                                self._state.push_event(Event.MOTION_HIGH)
+                            elif level == MotionLevel.LOW:
+                                self._state.push_event(Event.MOTION_LOW)
 
                 if self._watchdog:
                     self._watchdog.heartbeat("IMUTask")
@@ -173,53 +190,77 @@ class FSMTask:
             except Exception as exc:
                 logger.error(f"LED pattern hatası: {exc}")
 
-        if new_state in (State.ALARM,) or is_tamper:
-            if self._sound:
-                try:
+        entering_alarm = new_state == State.ALARM
+        prev_state = self._prev_state
+        exiting_alarm = (prev_state == State.ALARM and new_state != State.ALARM)
+
+        if self._sound:
+            try:
+                if entering_alarm:
+                    # Ensure any PRE_ALARM beep pattern is stopped before full alarm
+                    try:
+                        self._sound.stop_beep_pattern()
+                    except Exception:
+                        pass
                     self._sound.start_alarm()
-                except Exception as exc:
-                    logger.error(f"Alarm sesi başlatılamadı: {exc}")
+                elif exiting_alarm:
+                    # Stop alarm in non-blocking thread to avoid blocking FSM loop
+                    if self._sound.is_alarming():
+                        threading.Thread(
+                            target=self._sound.stop_alarm,
+                            daemon=True,
+                            name="StopAlarm"
+                        ).start()
+                # Otherwise do not call stop_alarm on every state change
+            except Exception as exc:
+                logger.error(f"Ses aktüatör hatası: {exc}")
+
+        if entering_alarm:
             threading.Thread(
                 target=self._capture_and_notify,
                 daemon=True,
                 name="AlarmCapture"
             ).start()
-
-        elif new_state in (State.DISARMED, State.ARMED, State.RIDE):
-            if self._sound:
-                try:
-                    self._sound.stop_alarm()
-                except Exception:
-                    pass
-
-        elif new_state == State.PRE_ALARM:
-            if self._sound:
-                try:
-                    threading.Thread(
-                        target=self._sound.beep_pattern,
-                        args=(1,),
-                        daemon=True,
-                    ).start()
-                except Exception:
-                    pass
+        elif new_state == State.PRE_ALARM and self._sound:
+            try:
+                # Start a tracked, stoppable beep pattern
+                self._sound.start_beep_pattern_async(1)
+            except Exception:
+                pass
 
     def _capture_and_notify(self):
         try:
             snapshot = self._state.get_snapshot()
             status = self._fsm.get_status_dict()
-            msg = (f"🚨 ALARM — {status['state']}\n"
-                   f"IMU: {snapshot.imu_magnitude:.3f}g\n"
-                   f"Zaman: {time.strftime('%H:%M:%S')}")
+            is_tamper = self._fsm.is_tamper()
+            msg = (
+                f"🚨 VeloGuard ALARM\n"
+                f"Durum: {'TAMPER' if is_tamper else status.get('state', '?')}\n"
+                f"IMU büyüklük: {snapshot.imu_magnitude:.3f}g\n"
+                f"Sıcaklık (ortalama): {snapshot.ambient_temp_c}\n"
+                f"CPU: {snapshot.cpu_temp_c}°C\n"
+                f"Zaman: {time.strftime('%H:%M:%S')}"
+            )
 
             if self._camera:
                 paths = self._camera.capture_alarm_series()
+                sent = False
                 for path in paths:
                     if self._telegram:
                         try:
                             with open(path, "rb") as f:
-                                self._telegram.send_alarm_photo_sync(f.read(), msg)
+                                # Only include caption on first photo
+                                self._telegram.send_alarm_photo_sync(f.read(), msg if not sent else "")
+                                sent = True
                         except Exception as exc:
                             logger.warning(f"Fotoğraf gönderilemedi: {exc}")
+                        finally:
+                            try:
+                                os.remove(path)
+                            except Exception:
+                                pass
+                if not sent and self._telegram:
+                    self._telegram.send_alarm_message_sync(msg)
             elif self._telegram:
                 self._telegram.send_alarm_message_sync(msg)
 

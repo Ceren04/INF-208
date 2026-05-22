@@ -38,6 +38,7 @@ class Event(Enum):
     BATTERY_CRITICAL  = auto()
     THERMAL_WARNING   = auto()
     THERMAL_CRITICAL  = auto()
+    STOP_ALARM        = auto()   # Alarmı sustur, KORU moduna dön
 
 
 class FSM:
@@ -62,26 +63,34 @@ class FSM:
                 self._notify_state_change()
                 return True
 
-            # ARM sonrası bekleme süresi: MOTION eventlerini yoksay
+            # Hareket olayları yalnızca koruma modunda geçerli
             if event in (Event.MOTION_LOW, Event.MOTION_HIGH):
+                if self._state not in (State.ARMED, State.PRE_ALARM):
+                    return False
                 suppress_until = getattr(self, "_arm_suppress_until", 0.0)
                 if time.time() < suppress_until:
                     remaining = round(suppress_until - time.time(), 2)
-                    logger.debug(f"ARM bekleme: {event.name} yoksayıldı ({remaining}s kaldı)")
+                    logger.debug(f"KORU kalibrasyon: {event.name} yoksayıldı ({remaining}s kaldı)")
                     return False
 
             # Geçiş tablosu
             transition = {
                 (State.DISARMED,  Event.ARM):               self._on_enter_armed,
+                (State.DISARMED,  Event.RIDE_START):        self._on_enter_ride,
                 (State.ARMED,     Event.MOTION_LOW):        self._on_enter_pre_alarm,
                 (State.ARMED,     Event.MOTION_HIGH):       self._on_enter_alarm,
                 (State.ARMED,     Event.RIDE_START):        self._on_enter_ride,
                 (State.ARMED,     Event.DISARM):            self._on_enter_disarmed,
                 (State.PRE_ALARM, Event.MOTION_HIGH):       self._on_enter_alarm,
                 (State.PRE_ALARM, Event.TIMEOUT_PRE_ALARM): self._on_enter_armed,
+                (State.PRE_ALARM, Event.STOP_ALARM):        self._on_enter_armed,
                 (State.PRE_ALARM, Event.DISARM):            self._on_enter_disarmed,
+                (State.PRE_ALARM, Event.RIDE_START):        self._on_enter_ride,
+                (State.ALARM,     Event.STOP_ALARM):        self._on_enter_armed,
                 (State.ALARM,     Event.DISARM):            self._on_enter_disarmed,
+                (State.ALARM,     Event.RIDE_START):        self._on_enter_ride,
                 (State.RIDE,      Event.RIDE_END):          self._on_enter_armed,
+                (State.RIDE,      Event.ARM):               self._on_enter_armed,
                 (State.RIDE,      Event.DISARM):            self._on_enter_disarmed,
             }
 
@@ -108,7 +117,13 @@ class FSM:
         self._state = State.ARMED
         self._state_enter_time = time.time()
         self._arm_suppress_until = time.time() + FSMConfig.ARM_DELAY_S
-        logger.info(f"→ ARMED (motion {FSMConfig.ARM_DELAY_S}s susturuldu)")
+        logger.info(f"→ KORU/ARMED (hareket algılama {FSMConfig.ARM_DELAY_S}s sonra aktif)")
+
+    def _on_enter_ride(self):
+        self._cancel_timer()
+        self._state = State.RIDE
+        self._state_enter_time = time.time()
+        logger.info("→ YANINDAYIM/RIDE (hareket alarmı kapalı)")
 
     def _on_enter_pre_alarm(self):
         self._state = State.PRE_ALARM
@@ -125,11 +140,6 @@ class FSM:
         self._state = State.ALARM
         self._state_enter_time = time.time()
         logger.warning("→ ALARM!")
-
-    def _on_enter_ride(self):
-        self._state = State.RIDE
-        self._state_enter_time = time.time()
-        logger.info("→ RIDE")
 
     def _enter_tamper(self):
         self._is_tamper = True

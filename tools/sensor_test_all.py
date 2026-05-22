@@ -31,6 +31,17 @@ RESET  = "\033[0m"
 BOLD   = "\033[1m"
 
 
+def reset_gpio():
+    """Önceki çalışmadan kalan GPIO durumunu temizle (RPi.GPIO + gpiozero çakışması)."""
+    try:
+        import RPi.GPIO as GPIO
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.cleanup()
+    except Exception:
+        pass
+
+
 def try_init(name: str, driver):
     """Sürücüyü başlatmayı dener, sonucu raporlar."""
     try:
@@ -52,6 +63,8 @@ def get_cpu_temp():
 
 
 def main():
+    reset_gpio()
+
     print(f"\n{BOLD}=== VeloGuard Sensör Entegrasyon Testi ==={RESET}")
     print(f"Kernel: {os.popen('uname -r').read().strip()}")
     print(f"Python: {sys.version.split()[0]}\n")
@@ -62,7 +75,7 @@ def main():
 
     try:
         from firmware.drivers.led_driver import LEDDriver
-        led = try_init("LED (GPIO5/6/13)", LEDDriver())
+        led = try_init("LED (GPIO23/24/25)", LEDDriver())
     except Exception as e:
         led = None
         print(f"  {'LED':<20} {RED}✗ {e}{RESET}")
@@ -151,19 +164,42 @@ def main():
     print(f"\n{BOLD}[3/3] Aktüatör testi:{RESET}")
 
     if led:
-        print("  LED ARMED pattern (3sn)...")
-        led.set_fsm_pattern("ARMED")
-        time.sleep(1.5)
-        led.set_fsm_pattern("PRE_ALARM")
-        time.sleep(1.0)
-        led.set_fsm_pattern("ALARM")
-        time.sleep(0.5)
-        led.all_off()
-        print(f"  LED {GREEN}✓{RESET}")
+        from firmware.drivers.led_driver import LEDColor
+
+        # 30 sn sensör döngüsü sonrası pinleri yeniden kur (gpiozero çakışması)
+        led.cleanup()
+        if not led.initialize():
+            print(f"  LED {RED}✗ yeniden başlatılamadı{RESET}")
+        else:
+            print("  Yeşil LED (ARMED)...")
+            led.set(LEDColor.GREEN, True)
+            time.sleep(1.0)
+            led.set(LEDColor.GREEN, False)
+
+            print("  Sarı LED (PRE_ALARM)...")
+            led.set(LEDColor.YELLOW, True)
+            time.sleep(1.0)
+            led.set(LEDColor.YELLOW, False)
+
+            print("  Kırmızı LED (ALARM)...")
+            led.set(LEDColor.RED, True)
+            time.sleep(1.0)
+            led.set(LEDColor.RED, False)
+
+            print("  FSM blink pattern (3sn)...")
+            led.set_fsm_pattern("ARMED")
+            time.sleep(1.5)
+            led.set_fsm_pattern("PRE_ALARM")
+            time.sleep(1.0)
+            led.set_fsm_pattern("ALARM")
+            time.sleep(0.5)
+            led.all_off()
+            print(f"  LED {GREEN}✓{RESET}")
+            print(f"  {YELLOW}Not: LED yanmadıysa GPIO23/24/25 kablolarını ve 220Ω dirençleri kontrol edin.{RESET}")
 
     if pam:
         print("  PAM8403 bip testi...")
-        pam.beep_pattern(2, duration_ms=200)
+        pam.beep_pattern(2, on_ms=200)
         print(f"  PAM8403 {GREEN}✓{RESET}")
 
     # ── Temizlik ───────────────────────────────────────────────────────────

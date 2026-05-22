@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 from firmware.drivers.base_sensor import BaseSensor
 from firmware.config import ThermalConfig
+from firmware.config import Pins
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class DHTDriver(BaseSensor):
     def __init__(self):
         super().__init__("DHT22")
         self._dht = None
-        self._pin_number = 4
+        self._pin_number = Pins.DHT_DATA
         self._last_temp:     Optional[float] = None
         self._last_humidity: Optional[float] = None
 
@@ -31,14 +32,30 @@ class DHTDriver(BaseSensor):
             # DHT11 veya DHT22 — aynı pin, farklı sınıf
             # Elinizde DHT11 varsa: adafruit_dht.DHT11
             # Elinizde DHT22 varsa: adafruit_dht.DHT22
-            self._dht = adafruit_dht.DHT11(board.D4, use_pulseio=False)
-            # Test okuması
-            _ = self._dht.temperature
-            self._initialized = True
-            self._logger.info("DHT11 başlatıldı — GPIO4")
-            return True
+            # Map numeric BCM pin to board.Dx attribute if possible
+            pin_attr = f'D{self._pin_number}'
+            pin_obj = getattr(board, pin_attr, None)
+            if pin_obj is None:
+                pin_obj = board.D4
+
+            # Try DHT22 first (newer models), fall back to DHT11
+            try:
+                self._dht = adafruit_dht.DHT22(pin_obj, use_pulseio=False)
+                _ = self._dht.temperature
+                self._initialized = True
+                self._logger.info(f"DHT22 başlatıldı — GPIO{self._pin_number}")
+                return True
+            except Exception:
+                try:
+                    self._dht = adafruit_dht.DHT11(pin_obj, use_pulseio=False)
+                    _ = self._dht.temperature
+                    self._initialized = True
+                    self._logger.info(f"DHT11 başlatıldı — GPIO{self._pin_number}")
+                    return True
+                except Exception as exc:
+                    raise exc
         except Exception as exc:
-            self._logger.error(f"DHT22 başlatılamadı: {exc}")
+            self._logger.error(f"DHT başlatılamadı: {exc}")
             return False
 
     def read(self) -> Optional[dict]:
